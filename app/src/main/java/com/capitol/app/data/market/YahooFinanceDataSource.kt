@@ -6,6 +6,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -25,12 +26,18 @@ import java.io.IOException
  * For the full yfinance feature set use [YFinanceBackendDataSource], which talks
  * to the bundled Python service in `/backend` that calls yfinance directly.
  */
-class YahooFinanceDataSource(private val http: OkHttpClient) : MarketDataSource {
+class YahooFinanceDataSource(
+    baseHttp: OkHttpClient,
+    private val base: String = BASE,
+    private val cookieUrl: String = "https://fc.yahoo.com",
+) : MarketDataSource {
 
+    private val http = baseHttp.newBuilder().cookieJar(MemoryCookieJar()).build()
     private val json = Json { ignoreUnknownKeys = true }
+    @Volatile private var crumb: String? = null
 
     override suspend fun history(symbol: String, range: ChartRange): PriceSeries = withContext(Dispatchers.IO) {
-        val url = "$BASE/v8/finance/chart/${symbol.trim().uppercase()}".toHttpUrl().newBuilder()
+        val url = "$base/v8/finance/chart/${symbol.trim().uppercase()}".toHttpUrl().newBuilder()
             .addQueryParameter("range", range.period)
             .addQueryParameter("interval", range.interval)
             .addQueryParameter("includePrePost", "false")
@@ -51,7 +58,7 @@ class YahooFinanceDataSource(private val http: OkHttpClient) : MarketDataSource 
 
     override suspend fun search(query: String): List<SymbolMatch> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
-        val url = "$BASE/v1/finance/search".toHttpUrl().newBuilder()
+        val url = "$base/v1/finance/search".toHttpUrl().newBuilder()
             .addQueryParameter("q", query.trim())
             .addQueryParameter("quotesCount", "12")
             .addQueryParameter("newsCount", "0")
@@ -68,6 +75,76 @@ class YahooFinanceDataSource(private val http: OkHttpClient) : MarketDataSource 
                 type = o.str("quoteType") ?: "",
             )
         }
+    }
+
+    /** Key statistics via `quoteSummary` (the endpoint behind yfinance's `Ticker.info`). */
+    override suspend fun fundamentals(symbol: String): Fundamentals = withContext(Dispatchers.IO) {
+        val sym = symbol.trim().uppercase()
+        fun fetch(): JsonObject? {
+            val c = crumb ?: obtainCrumb() ?: return null
+            val url = "$base/v10/finance/quoteSummary/$sym".toHttpUrl().newBuilder()
+                .addQueryParameter("modules", "price,summaryDetail,defaultKeyStatistics,assetProfile,financialData")
+                .addQueryParameter("crumb", c).build()
+            val req = Request.Builder().url(url).header("User-Agent", USER_AGENT).header("Accept", "application/json").build()
+            http.executeWithRetry(req).use { resp ->
+                if (resp.code == 401 || resp.code == 403) { crumb = null; return null }
+                if (!resp.isSuccessful) return null
+                return (json.parseToJsonElement(resp.body!!.string()).jsonObject["quoteSummary"] as? JsonObject)
+                    ?.get("result")?.let { it as? JsonArray }?.firstOrNull() as? JsonObject
+            }
+        }
+        val r = fetch() ?: fetch() ?: throw MarketDataException("Fundamentals unavailable for $sym")
+        parseQuoteSummary(sym, r)
+    }
+
+    override suspend fun news(symbol: String): List<NewsItem> = withContext(Dispatchers.IO) {
+        val url = "$base/v1/finance/search".toHttpUrl().newBuilder()
+            .addQueryParameter("q", symbol.trim()).addQueryParameter("quotesCount", "0")
+            .addQueryParameter("newsCount", "10").build()
+        val root = json.parseToJsonElement(get(url.toString())).jsonObject
+        (root["news"] as? JsonArray).orEmpty().mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            NewsItem(
+                title = o.str("title") ?: return@mapNotNull null,
+                publisher = o.str("publisher") ?: "",
+                link = o.str("link") ?: return@mapNotNull null,
+                publishedAt = (o["providerPublishTime"] as? JsonPrimitive)?.longOrNull ?: 0L,
+            )
+        }
+    }
+
+    private fun obtainCrumb(): String? = runCatching {
+        // Same handshake as yfinance: get Yahoo's consent cookie, then exchange it for a crumb.
+        http.newCall(Request.Builder().url(cookieUrl).header("User-Agent", USER_AGENT).build()).execute().close()
+        http.newCall(Request.Builder().url("$base/v1/test/getcrumb").header("User-Agent", USER_AGENT).build()).execute().use { r ->
+            r.body?.string()?.trim()?.takeIf { r.isSuccessful && it.isNotEmpty() && !it.contains('<') }
+        }
+    }.getOrNull()?.also { crumb = it }
+
+    internal fun parseQuoteSummary(sym: String, r: JsonObject): Fundamentals {
+        fun mod(n: String) = r[n] as? JsonObject
+        fun raw(m: JsonObject?, k: String): Double? = when (val v = m?.get(k)) {
+            is JsonObject -> (v["raw"] as? JsonPrimitive)?.doubleOrNull
+            is JsonPrimitive -> v.doubleOrNull
+            else -> null
+        }
+        val price = mod("price"); val sd = mod("summaryDetail"); val ks = mod("defaultKeyStatistics")
+        val ap = mod("assetProfile"); val fd = mod("financialData")
+        return Fundamentals(
+            symbol = sym,
+            name = price?.str("longName") ?: price?.str("shortName"),
+            sector = ap?.str("sector"), industry = ap?.str("industry"),
+            currency = price?.str("currency"),
+            marketCap = raw(price, "marketCap") ?: raw(sd, "marketCap"),
+            trailingPE = raw(sd, "trailingPE"), forwardPE = raw(sd, "forwardPE") ?: raw(ks, "forwardPE"),
+            priceToBook = raw(ks, "priceToBook"), dividendYield = raw(sd, "dividendYield"),
+            beta = raw(sd, "beta") ?: raw(ks, "beta"),
+            fiftyTwoWeekHigh = raw(sd, "fiftyTwoWeekHigh"), fiftyTwoWeekLow = raw(sd, "fiftyTwoWeekLow"),
+            averageVolume = raw(sd, "averageVolume"),
+            profitMargins = raw(fd, "profitMargins") ?: raw(ks, "profitMargins"),
+            returnOnEquity = raw(fd, "returnOnEquity"), debtToEquity = raw(fd, "debtToEquity"),
+            summary = ap?.str("longBusinessSummary"),
+        )
     }
 
     private fun parseChart(result: JsonObject, range: ChartRange): PriceSeries {
@@ -112,8 +189,9 @@ class YahooFinanceDataSource(private val http: OkHttpClient) : MarketDataSource 
             .header("Accept", "application/json")
             .build()
         try {
-            http.newCall(req).execute().use { resp ->
+            http.executeWithRetry(req).use { resp ->
                 val body = resp.body?.string().orEmpty()
+                if (resp.code == 429) throw MarketDataException("Yahoo Finance is rate-limiting requests — try again in a minute")
                 if (!resp.isSuccessful && body.isBlank()) {
                     throw MarketDataException("Yahoo Finance returned HTTP ${resp.code}")
                 }

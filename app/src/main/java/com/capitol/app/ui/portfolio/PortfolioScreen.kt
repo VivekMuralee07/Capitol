@@ -83,7 +83,7 @@ class PortfolioViewModel(val c: AppContainer) : ViewModel() {
     fun completeKiteLogin(requestToken: String) = viewModelScope.launch {
         runCatching { kite.createSession(requestToken) }
             .onSuccess { message.value = "Connected to Zerodha Kite"; refresh() }
-            .onFailure { message.value = it.message }
+            .onFailure { com.capitol.app.diagnostics.Diagnostics.error("Portfolio", it.message ?: "error", it); message.value = it.message }
     }
     fun kiteLogout() { kite.logout(); refresh() }
     fun saveIndToken(token: String) { c.secrets.put(Key.INDMONEY_ACCESS_TOKEN, token); refresh() }
@@ -94,14 +94,14 @@ class PortfolioViewModel(val c: AppContainer) : ViewModel() {
     val mcpBusy = MutableStateFlow(false)
     fun beginMcpLogin(onUrl: (String) -> Unit) = viewModelScope.launch {
         mcpBusy.value = true
-        runCatching { mcp.beginLogin() }.onSuccess(onUrl).onFailure { message.value = it.message }
+        runCatching { mcp.beginLogin() }.onSuccess(onUrl).onFailure { com.capitol.app.diagnostics.Diagnostics.error("Portfolio", it.message ?: "error", it); message.value = it.message }
         mcpBusy.value = false
     }
     fun completeMcpLogin(redirect: String) = viewModelScope.launch {
         mcpBusy.value = true
         runCatching { mcp.completeLogin(redirect); mcp.tools() }
             .onSuccess { message.value = "Connected to INDmoney · the AI agent can now read your INDmoney portfolio (${it.size} tools)" }
-            .onFailure { message.value = it.message }
+            .onFailure { com.capitol.app.diagnostics.Diagnostics.error("Portfolio", it.message ?: "error", it); message.value = it.message }
         mcpBusy.value = false
     }
     fun mcpDisconnect() { mcp.disconnect(); message.value = "Disconnected INDmoney MCP" }

@@ -31,10 +31,13 @@ import kotlinx.serialization.json.jsonObject
 class CapitolAgent(
     private val secrets: SecretStore,
     private val tools: AgentTools,
+    /** Override for tests (a local fake API); null uses api.anthropic.com. */
+    private val baseUrl: String? = null,
 ) {
     sealed interface Step {
         data class ToolCall(val name: String, val summary: String) : Step
         data class ToolDone(val name: String, val ok: Boolean) : Step
+        data class TextDelta(val text: String) : Step
     }
 
     class AgentException(message: String) : Exception(message)
@@ -48,14 +51,14 @@ class CapitolAgent(
 
     val isConfigured get() = secrets.has(SecretStore.Key.ANTHROPIC_API_KEY)
 
-    fun reset() = history.clear()
+    fun reset() { history.clear(); transcript.clear(); lastInputTokens = 0 }
 
     private fun client(): AnthropicClient {
         val key = secrets.get(SecretStore.Key.ANTHROPIC_API_KEY)
             ?: throw AgentException("Add your Anthropic API key in Settings → AI Agent to enable the agent.")
         if (client == null || clientKey != key) {
             client?.close()
-            client = AnthropicOkHttpClient.builder().apiKey(key).build()
+            client = AnthropicOkHttpClient.builder().apiKey(key).apply { baseUrl?.let { baseUrl(it) } }.build()
             clientKey = key
         }
         return client!!
@@ -64,6 +67,7 @@ class CapitolAgent(
     private val baseToolDefs: List<Tool> by lazy {
         tools.specs.map { spec ->
             Tool.builder()
+                .eagerInputStreaming(true)
                 .name(spec.name)
                 .description(spec.description)
                 .inputSchema(
@@ -87,6 +91,7 @@ class CapitolAgent(
         val required = (schema["required"] as? kotlinx.serialization.json.JsonArray)
             ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }.orEmpty()
         Tool.builder()
+            .eagerInputStreaming(true)
             .name(ext.claudeName)
             .description("[INDmoney account, read via INDmoney's official MCP server] " + ext.tool.description.ifBlank { ext.tool.name })
             .inputSchema(
@@ -102,26 +107,74 @@ class CapitolAgent(
 
     private fun baseParams(toolDefs: List<Tool>) = MessageCreateParams.builder()
         .model(MODEL)
-        .maxTokens(16000L)
+        .maxTokens(32000L)
         .system(SYSTEM_PROMPT)
+        // Automatic prompt caching: the system prompt, tools and earlier turns are re-read at 5% of the price.
+        .cacheControl(com.anthropic.models.messages.CacheControlEphemeral.builder().build())
         .outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.MEDIUM).build())
         // Server-side refusal fallback: if the primary model declines, the API retries on a fallback model.
         .putAdditionalHeader("anthropic-beta", "server-side-fallback-2026-07-01")
         .putAdditionalBodyProperty("fallbacks", JsonValue.from("default"))
         .apply { toolDefs.forEach { addTool(it) } }
 
+    /** Result of one question: the answer text plus what it cost. */
+    data class Answer(val text: String, val usage: Usage, val condensed: Boolean)
+
+    /** Token usage and estimated cost (USD) at Claude Opus 5.5 list prices. */
+    @kotlinx.serialization.Serializable
+    data class Usage(val inputTokens: Long = 0, val outputTokens: Long = 0, val cacheReadTokens: Long = 0, val cacheWriteTokens: Long = 0) {
+        operator fun plus(o: Usage) = Usage(inputTokens + o.inputTokens, outputTokens + o.outputTokens, cacheReadTokens + o.cacheReadTokens, cacheWriteTokens + o.cacheWriteTokens)
+        val costUsd: Double get() = (inputTokens * PRICE_IN + outputTokens * PRICE_OUT + cacheReadTokens * PRICE_CACHE_READ + cacheWriteTokens * PRICE_CACHE_WRITE) / 1_000_000.0
+        companion object {
+            // USD per million tokens (Claude Opus 5.5). Cache writes assume the 5-minute cache (1.25× input).
+            const val PRICE_IN = 4.0; const val PRICE_OUT = 20.0; const val PRICE_CACHE_READ = 0.20; const val PRICE_CACHE_WRITE = 5.0
+        }
+    }
+
+    /** Everything needed to resume a conversation later (saved chats). */
+    @kotlinx.serialization.Serializable
+    data class Session(val apiHistory: List<String>, val transcript: List<Pair<String, String>>, val lastInputTokens: Long)
+
+    /** User questions and final answers (text only), used to build a recap when condensing. */
+    private val transcript = mutableListOf<Pair<String, String>>()
+    private var lastInputTokens = 0L
+
+    fun exportSession() = Session(history.map { com.anthropic.core.jsonMapper().writeValueAsString(it) }, transcript.toList(), lastInputTokens)
+
+    fun restore(session: Session?) {
+        history.clear(); transcript.clear(); lastInputTokens = 0
+        session ?: return
+        runCatching { session.apiHistory.map { com.anthropic.core.jsonMapper().readValue(it, MessageParam::class.java) } }
+            .onSuccess { history += it; transcript += session.transcript; lastInputTokens = session.lastInputTokens }
+    }
+
     /**
-     * Sends [userText] and runs the tool loop until Claude produces a final answer.
-     * [onStep] is invoked (on the IO dispatcher) for live progress in the UI.
+     * Sends [userText] and runs the tool loop until Claude produces a final answer, streaming
+     * text as it arrives. [onStep] is invoked (on the IO dispatcher) for live progress in the UI.
      */
-    suspend fun ask(userText: String, onStep: (Step) -> Unit = {}): String = withContext(Dispatchers.IO) {
+    suspend fun ask(userText: String, onStep: (Step) -> Unit = {}): Answer = withContext(Dispatchers.IO) {
         val c = client()
-        history += MessageParam.ofUser(userText)
-        val checkpoint = history.size - 1
+        // Long conversations get expensive (every turn resends the history). Past the threshold, start a
+        // fresh conversation seeded with a short recap instead of editing the old one.
+        val condensed = history.isNotEmpty() && lastInputTokens > CONDENSE_AT_TOKENS
+        if (condensed) {
+            val recap = transcript.takeLast(4).joinToString("\n\n") { (q, a) -> "User asked: ${q.take(300)}\nYou answered: ${a.take(700)}" }
+            history.clear()
+            history += MessageParam.ofUser("Recap of our earlier conversation (condensed to save cost):\n\n$recap\n\n---\nNew question: $userText")
+        } else {
+            history += MessageParam.ofUser(userText)
+        }
+        val checkpoint = if (condensed) 0 else history.size - 1
         val toolDefs = baseToolDefs + externalToolDefs()
+        val required = tools.specs.associate { it.name to it.required }
+        var usage = Usage()
         try {
             repeat(MAX_TURNS) {
-                val response: Message = c.messages().create(baseParams(toolDefs).messages(history).build())
+                val response: Message = streamTurn(c, baseParams(toolDefs).messages(history).build(), onStep)
+                response.usage().let { u ->
+                    usage += Usage(u.inputTokens(), u.outputTokens(), u.cacheReadInputTokens().orElse(0L), u.cacheCreationInputTokens().orElse(0L))
+                    lastInputTokens = u.inputTokens() + u.cacheReadInputTokens().orElse(0L) + u.cacheCreationInputTokens().orElse(0L)
+                }
                 history += response.toParam()
 
                 when (response.stopReason().orElse(null)) {
@@ -129,28 +182,31 @@ class CapitolAgent(
                         val results = mutableListOf<ContentBlockParam>()
                         for (block in response.content()) {
                             val use = block.toolUse().orElse(null) ?: continue
-                            val input: JsonObject = runCatching {
-                                json.parseToJsonElement(use._input().toJsonString()).jsonObject
-                            }.getOrDefault(JsonObject(emptyMap()))
-                            onStep(Step.ToolCall(use.name(), describe(use.name(), input)))
-                            val (text, isError) = try {
-                                tools.execute(use.name(), input) to false
-                            } catch (e: Exception) {
-                                "Error: ${e.message}" to true
+                            val raw = use._input().toJsonString()
+                            val input = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
+                            val missing = input?.let { inp -> required[use.name()].orEmpty().filter { it !in inp } }.orEmpty()
+                            val (text, isError) = when {
+                                // Eager input streaming means inputs aren't validated by the API: check them here.
+                                input == null -> "{\"INVALID_JSON\": ${JsonValue.from(raw).toJsonString()}}" to true
+                                missing.isNotEmpty() -> "Missing required argument(s): ${missing.joinToString()}" to true
+                                else -> {
+                                    onStep(Step.ToolCall(use.name(), describe(use.name(), input)))
+                                    try { tools.execute(use.name(), input) to false } catch (e: Exception) { "Error: ${e.message}" to true }
+                                        .also { onStep(Step.ToolDone(use.name(), !it.second)) }
+                                }
                             }
-                            onStep(Step.ToolDone(use.name(), !isError))
                             results += ContentBlockParam.ofToolResult(
                                 ToolResultBlockParam.builder().toolUseId(use.id()).content(text).isError(isError).build()
                             )
                         }
                         history += MessageParam.ofUserOfContentBlockParams(results)
                     }
-                    StopReason.REFUSAL -> return@withContext "I can't help with that request."
-                    StopReason.MAX_TOKENS -> return@withContext textOf(response) + "\n\n_(Response truncated.)_"
-                    else -> return@withContext textOf(response).ifBlank { "Done." }
+                    StopReason.REFUSAL -> return@withContext finish(userText, "I can't help with that request.", usage, condensed)
+                    StopReason.MAX_TOKENS -> return@withContext finish(userText, textOf(response) + "\n\n_(Response truncated.)_", usage, condensed)
+                    else -> return@withContext finish(userText, textOf(response).ifBlank { "Done." }, usage, condensed)
                 }
             }
-            "I ran out of steps before finishing. Try a narrower question."
+            finish(userText, "I ran out of steps before finishing. Try a narrower question.", usage, condensed)
         } catch (e: UnauthorizedException) {
             rollback(checkpoint); throw AgentException("Your Anthropic API key was rejected. Check it in Settings.")
         } catch (e: RateLimitException) {
@@ -158,6 +214,23 @@ class CapitolAgent(
         } catch (e: AnthropicServiceException) {
             rollback(checkpoint); throw AgentException("Claude API error (${e.statusCode()}): ${e.message}")
         }
+    }
+
+    private fun finish(q: String, a: String, usage: Usage, condensed: Boolean): Answer {
+        transcript += q to a
+        return Answer(a, usage, condensed)
+    }
+
+    /** Streams one model turn, forwarding text deltas, and returns the accumulated message. */
+    private fun streamTurn(c: AnthropicClient, params: MessageCreateParams, onStep: (Step) -> Unit): Message {
+        val acc = com.anthropic.helpers.MessageAccumulator.create()
+        c.messages().createStreaming(params).use { stream ->
+            stream.stream().forEach { event ->
+                acc.accumulate(event)
+                event.contentBlockDelta().flatMap { it.delta().text() }.ifPresent { onStep(Step.TextDelta(it.text())) }
+            }
+        }
+        return acc.message()
     }
 
     /** One-shot digest for the background autopilot (no tools). */
@@ -190,7 +263,9 @@ class CapitolAgent(
             "search_symbol" -> "Searching for “${s("query")}”"
             "run_technical_analysis" -> "Analysing ${s("symbol")}" + (input["indicators"]?.let { " with $it" } ?: "")
             "get_price_summary" -> "Fetching price history for ${s("symbol")}"
-            "get_watchlist" -> "Reading your watchlist"
+            "get_watchlist" -> "Reading your watchlists"
+            "get_fundamentals" -> "Fetching fundamentals for ${s("symbol")}"
+            "get_news" -> "Reading news on ${s("symbol")}"
             "scan_watchlist" -> "Scanning your whole watchlist"
             "add_to_watchlist" -> "Adding ${s("symbol")} to watchlist"
             "remove_from_watchlist" -> "Removing ${s("symbol")} from watchlist"
@@ -218,6 +293,8 @@ class CapitolAgent(
     companion object {
         const val MODEL = "claude-opus-5-5"
         private const val MAX_TURNS = 12
+        /** Start a condensed conversation once a turn's input exceeds this many tokens. */
+        const val CONDENSE_AT_TOKENS = 60_000L
 
         private val SYSTEM_PROMPT = """
             You are Capitol's AI market analyst inside an Android app. You help users understand the technical picture of stocks, indices and ETFs using the app's own tools, which fetch Yahoo Finance data (the same source as the yfinance library) and compute indicators on-device.

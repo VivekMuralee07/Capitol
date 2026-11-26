@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -31,7 +32,20 @@ data class AnalysisState(
     val query: String = "",
     val suggestions: List<SymbolMatch> = emptyList(),
     val inWatchlist: Boolean = false,
-)
+    val params: com.capitol.app.analysis.IndicatorParams = com.capitol.app.analysis.IndicatorParams.DEFAULT,
+    /** Multi-timeframe confirmation: verdicts on daily and weekly bars with the same indicators. */
+    val timeframes: List<Pair<String, AnalysisReport>> = emptyList(),
+    val fundamentals: com.capitol.app.data.market.Fundamentals? = null,
+    val news: List<com.capitol.app.data.market.NewsItem> = emptyList(),
+    val backtest: com.capitol.app.analysis.BacktestResult? = null,
+    val backtestProgress: Float? = null,
+    val backtestHorizon: Int = 20,
+) {
+    /** True when the daily and weekly verdicts point the same way. */
+    val timeframesAligned: Boolean? get() = timeframes.takeIf { it.size >= 2 }?.map { it.second.verdict }?.let { v ->
+        when { v.all { it.isBullish } || v.all { it.isBearish } -> true; v.any { it.isBullish } && v.any { it.isBearish } -> false; else -> null }
+    }
+}
 
 object Presets {
     val TREND = setOf(IndicatorType.SMA, IndicatorType.EMA, IndicatorType.ADX, IndicatorType.SUPERTREND, IndicatorType.ICHIMOKU, IndicatorType.PSAR)
@@ -51,7 +65,13 @@ class AnalysisViewModel(private val c: AppContainer) : ViewModel() {
 
     init {
         viewModelScope.launch {
-            _state.value = _state.value.copy(selected = c.settings.settings.first().defaultIndicators)
+            val st = c.settings.settings.first()
+            _state.value = _state.value.copy(selected = st.defaultIndicators, params = st.indicatorParams)
+        }
+        viewModelScope.launch {
+            c.settings.settings.map { it.indicatorParams }.distinctUntilChanged().collect { p ->
+                if (p != _state.value.params) { _state.value = _state.value.copy(params = p, backtest = null); recompute(); loadTimeframes() }
+            }
         }
         viewModelScope.launch {
             queries.debounce(300).distinctUntilChanged().filter { it.length >= 2 }.collect { q ->
@@ -75,8 +95,10 @@ class AnalysisViewModel(private val c: AppContainer) : ViewModel() {
     fun open(symbol: String) {
         val s = symbol.trim().uppercase()
         if (s.isEmpty()) return
-        _state.value = _state.value.copy(symbol = s, query = "", suggestions = emptyList())
+        _state.value = _state.value.copy(symbol = s, query = "", suggestions = emptyList(),
+            fundamentals = null, news = emptyList(), backtest = null, timeframes = emptyList())
         load()
+        loadExtras(s)
     }
 
     fun setRange(r: ChartRange) { _state.value = _state.value.copy(range = r); load() }
@@ -87,8 +109,57 @@ class AnalysisViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun setIndicators(set: Set<IndicatorType>) {
-        _state.value = _state.value.copy(selected = set)
+        _state.value = _state.value.copy(selected = set, backtest = null)
         recompute()
+        loadTimeframes()
+    }
+
+    private var backtestJob: Job? = null
+
+    /** Walk-forward backtest of the current indicator set on 2 years of daily bars. */
+    fun runBacktest(horizon: Int = _state.value.backtestHorizon) {
+        val sym = _state.value.symbol ?: return
+        backtestJob?.cancel()
+        backtestJob = viewModelScope.launch {
+            _state.value = _state.value.copy(backtestProgress = 0f, backtest = null, backtestHorizon = horizon)
+            val result = runCatching {
+                val series = c.market.history(sym, ChartRange.Y2)
+                val st = _state.value
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    com.capitol.app.analysis.Backtester.run(series, st.selected, st.params, horizon = horizon, periodLabel = "the last 2 years") { p ->
+                        _state.value = _state.value.copy(backtestProgress = p)
+                    }
+                }
+            }
+            _state.value = _state.value.copy(backtestProgress = null, backtest = result.getOrNull(),
+                error = result.exceptionOrNull()?.let { "Backtest failed: ${it.message}" } ?: _state.value.error)
+        }
+    }
+
+    private var tfJob: Job? = null
+
+    /** Daily + weekly verdicts with the selected indicators (multi-timeframe confirmation). */
+    private fun loadTimeframes() {
+        val sym = _state.value.symbol ?: return
+        tfJob?.cancel()
+        tfJob = viewModelScope.launch {
+            val st = _state.value
+            val frames = listOf("Daily" to ChartRange.Y1, "Weekly" to ChartRange.Y5).mapNotNull { (label, r) ->
+                runCatching { label to TechnicalAnalyzer.analyze(c.market.history(sym, r), st.selected, st.params) }.getOrNull()
+            }
+            _state.value = _state.value.copy(timeframes = frames)
+        }
+    }
+
+    private fun loadExtras(sym: String) {
+        viewModelScope.launch {
+            runCatching { c.market.fundamentals(sym) }.onSuccess { if (_state.value.symbol == sym) _state.value = _state.value.copy(fundamentals = it) }
+                .onFailure { com.capitol.app.diagnostics.Diagnostics.info("Analysis", "fundamentals($sym): ${it.message}") }
+        }
+        viewModelScope.launch {
+            runCatching { c.market.news(sym) }.onSuccess { if (_state.value.symbol == sym) _state.value = _state.value.copy(news = it) }
+        }
+        loadTimeframes()
     }
 
     fun saveAsDefault() = viewModelScope.launch { c.settings.setDefaultIndicators(_state.value.selected) }
@@ -127,6 +198,6 @@ class AnalysisViewModel(private val c: AppContainer) : ViewModel() {
 
     private fun recompute() {
         val s = _state.value.series ?: return
-        _state.value = _state.value.copy(report = TechnicalAnalyzer.analyze(s, _state.value.selected))
+        _state.value = _state.value.copy(report = TechnicalAnalyzer.analyze(s, _state.value.selected, _state.value.params))
     }
 }

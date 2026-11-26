@@ -8,7 +8,9 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.capitol.app.analysis.IndicatorParams
 import com.capitol.app.analysis.IndicatorType
+import kotlinx.serialization.encodeToString
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -24,6 +26,7 @@ data class AppSettings(
     val agentScanHours: Long = 6,
     val defaultIndicators: Set<IndicatorType> = IndicatorType.DEFAULTS,
     val autoCheckUpdates: Boolean = true,
+    val indicatorParams: IndicatorParams = IndicatorParams.DEFAULT,
 )
 
 private val Context.dataStore by preferencesDataStore(name = "capitol_settings")
@@ -38,6 +41,7 @@ class SettingsStore(private val context: Context) {
         val scanHours = longPreferencesKey("agent_scan_hours")
         val indicators = stringSetPreferencesKey("default_indicators")
         val autoUpdates = booleanPreferencesKey("auto_updates")
+        val params = stringPreferencesKey("indicator_params")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p -> p.toSettings() }
@@ -53,6 +57,8 @@ class SettingsStore(private val context: Context) {
             ?.mapNotNull { runCatching { IndicatorType.valueOf(it) }.getOrNull() }?.toSet()
             ?.takeIf { it.isNotEmpty() } ?: IndicatorType.DEFAULTS,
         autoCheckUpdates = this[K.autoUpdates] ?: true,
+        indicatorParams = this[K.params]?.let { runCatching { paramsJson.decodeFromString<IndicatorParams>(it) }.getOrNull() }
+            ?.sanitized() ?: IndicatorParams.DEFAULT,
     )
 
     suspend fun setTheme(mode: ThemeMode) = context.dataStore.edit { it[K.theme] = mode.name }
@@ -63,5 +69,10 @@ class SettingsStore(private val context: Context) {
     suspend fun setAgentScanHours(h: Long) = context.dataStore.edit { it[K.scanHours] = h.coerceIn(1, 24) }
     suspend fun setDefaultIndicators(set: Set<IndicatorType>) =
         context.dataStore.edit { it[K.indicators] = set.map { t -> t.name }.toSet() }
+    suspend fun setIndicatorParams(p: IndicatorParams) =
+        context.dataStore.edit { it[K.params] = paramsJson.encodeToString(p.sanitized()) }
+
+    private val paramsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
     suspend fun setAutoCheckUpdates(on: Boolean) = context.dataStore.edit { it[K.autoUpdates] = on }
 }

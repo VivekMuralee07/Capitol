@@ -44,11 +44,13 @@ class AppContainer(context: Context) {
         YahooFinanceDataSource(http),
         YFinanceBackendDataSource(http) { backendUrl },
         settings,
+        java.io.File(context.cacheDir, "market"),
     )
     val portfolio = PortfolioRepository(KiteConnectClient(http, secrets), IndMoneyClient(http, secrets))
     val indmoneyMcp = IndMoneyMcp(http, secrets)
     val agentTools = AgentTools(market, watchlist, portfolio, indmoneyMcp)
     val agent = CapitolAgent(secrets, agentTools)
+    val chats = com.capitol.app.agent.ChatStore(java.io.File(context.filesDir, "chats"))
     val updates = UpdateManager(context, http)
 }
 
@@ -59,14 +61,21 @@ class CapitolApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        com.capitol.app.diagnostics.Diagnostics.init(this)
         container = AppContainer(this)
         AutopilotWorker.ensureChannel(this)
         appScope.launch {
+            container.watchlist.data.map { it.activeList }.distinctUntilChanged().collect {
+                com.capitol.app.widget.WatchlistWidget.refresh(this@CapitolApp)
+            }
+        }
+        appScope.launch {
             container.settings.settings
-                .map { Triple(it.agentAutoScan, it.agentScanHours, it.defaultIndicators) }
+                .map { Triple(it.agentAutoScan, it.agentScanHours, it.defaultIndicators to it.indicatorParams) }
                 .distinctUntilChanged()
-                .collect { (on, hours, inds) ->
-                    container.agentTools.defaultIndicators = inds
+                .collect { (on, hours, ip) ->
+                    container.agentTools.defaultIndicators = ip.first
+                    container.agentTools.params = ip.second
                     AutopilotWorker.schedule(this@CapitolApp, on, hours)
                 }
         }

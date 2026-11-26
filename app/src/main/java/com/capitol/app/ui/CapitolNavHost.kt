@@ -84,7 +84,7 @@ fun CapitolNavHost(c: AppContainer, isDark: Boolean, nav: NavHostController = re
 
     Scaffold(
         bottomBar = {
-            if (current != "settings") NavigationBar {
+            if (current != "settings" && current != "compare") NavigationBar {
                 TABS.forEach { t ->
                     NavigationBarItem(
                         selected = current == t.route,
@@ -110,7 +110,8 @@ fun CapitolNavHost(c: AppContainer, isDark: Boolean, nav: NavHostController = re
                 }
                 composable("analyze?symbol={symbol}", arguments = listOf(navArgument("symbol") { type = NavType.StringType; nullable = true; defaultValue = null })) { e ->
                     val vm: AnalysisViewModel = viewModel { AnalysisViewModel(c) }
-                    AnalysisScreen(vm, e.arguments?.getString("symbol"), onAskAi = askAi)
+                    AnalysisScreen(vm, e.arguments?.getString("symbol"),
+                        onCompare = { s -> nav.navigate("compare?symbols=${Uri.encode(s)}") }, onAskAi = askAi)
                 }
                 composable("watchlist") {
                     val vm: WatchlistViewModel = viewModel { WatchlistViewModel(c) }
@@ -123,6 +124,11 @@ fun CapitolNavHost(c: AppContainer, isDark: Boolean, nav: NavHostController = re
                 composable("portfolio") {
                     val vm: PortfolioViewModel = viewModel { PortfolioViewModel(c) }
                     PortfolioScreen(vm, onAnalyze = openSymbol, onAskAi = askAi)
+                }
+                composable("compare?symbols={symbols}", arguments = listOf(navArgument("symbols") { type = NavType.StringType; nullable = true; defaultValue = null })) { e ->
+                    val vm: com.capitol.app.ui.compare.CompareViewModel = viewModel { com.capitol.app.ui.compare.CompareViewModel(c) }
+                    com.capitol.app.ui.compare.CompareScreen(vm, e.arguments?.getString("symbols")?.split(',')?.filter { it.isNotBlank() }.orEmpty(),
+                        onBack = { nav.popBackStack() }, onOpen = openSymbol)
                 }
                 composable("settings") {
                     SettingsScreen(c, onBack = { nav.popBackStack() }, onStartUpdate = {

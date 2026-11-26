@@ -109,13 +109,56 @@ def search(q: str = Query(..., min_length=1, max_length=64)) -> dict[str, Any]:
 
 @app.get("/info")
 def info(symbol: str = Query(..., min_length=1, max_length=32)) -> dict[str, Any]:
-    """Selected fundamentals from yfinance's Ticker.info (useful context for the AI agent)."""
-    keys = [
-        "longName", "sector", "industry", "marketCap", "trailingPE", "forwardPE", "priceToBook",
-        "dividendYield", "beta", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "averageVolume", "currency",
-    ]
+    """Selected fundamentals from yfinance's Ticker.info, in the shape the app expects."""
+    sym = symbol.strip().upper()
     try:
-        data = yf.Ticker(symbol.strip().upper()).info or {}
+        d = yf.Ticker(sym).info or {}
     except Exception as e:
         raise HTTPException(502, str(e)) from e
-    return {k: data.get(k) for k in keys}
+    return {
+        "symbol": sym,
+        "name": d.get("longName") or d.get("shortName"),
+        "sector": d.get("sector"),
+        "industry": d.get("industry"),
+        "currency": d.get("currency"),
+        "marketCap": _num(d.get("marketCap")),
+        "trailingPE": _num(d.get("trailingPE")),
+        "forwardPE": _num(d.get("forwardPE")),
+        "priceToBook": _num(d.get("priceToBook")),
+        "dividendYield": _num(d.get("dividendYield")),
+        "beta": _num(d.get("beta")),
+        "fiftyTwoWeekHigh": _num(d.get("fiftyTwoWeekHigh")),
+        "fiftyTwoWeekLow": _num(d.get("fiftyTwoWeekLow")),
+        "averageVolume": _num(d.get("averageVolume")),
+        "profitMargins": _num(d.get("profitMargins")),
+        "returnOnEquity": _num(d.get("returnOnEquity")),
+        "debtToEquity": _num(d.get("debtToEquity")),
+        "summary": d.get("longBusinessSummary"),
+    }
+
+
+@app.get("/news")
+def news(symbol: str = Query(..., min_length=1, max_length=32)) -> dict[str, Any]:
+    """Recent headlines from yfinance's Ticker.news (handles old and new item shapes)."""
+    try:
+        items = yf.Ticker(symbol.strip().upper()).news or []
+    except Exception as e:
+        raise HTTPException(502, str(e)) from e
+    out = []
+    for it in items[:10]:
+        c = it.get("content") or it
+        link = (c.get("canonicalUrl") or {}).get("url") if isinstance(c.get("canonicalUrl"), dict) else c.get("link")
+        title = c.get("title")
+        if not title or not link:
+            continue
+        published = c.get("providerPublishTime") or 0
+        if not published and c.get("pubDate"):
+            from datetime import datetime
+            try:
+                published = int(datetime.fromisoformat(c["pubDate"].replace("Z", "+00:00")).timestamp())
+            except ValueError:
+                published = 0
+        provider = c.get("provider") if isinstance(c.get("provider"), dict) else {}
+        out.append({"title": title, "publisher": c.get("publisher") or provider.get("displayName", ""),
+                    "link": link, "publishedAt": int(published)})
+    return {"news": out}

@@ -101,6 +101,7 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
 ) {
     val st by vm.state.collectAsStateWithLifecycle()
+    com.capitol.app.ui.components.AutoRefreshDuringMarketHours { vm.refresh(force = true) }
     HomeContent(st, isDark, onToggleTheme, { vm.refresh(force = true) }, vm::selectHero, onOpenSymbol, onOpenAgent, onOpenPortfolio, onOpenSettings)
 }
 
@@ -117,7 +118,8 @@ fun HomeContent(
     onOpenPortfolio: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    Box(Modifier.fillMaxSize()) {
+    @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+    androidx.compose.material3.pulltorefresh.PullToRefreshBox(isRefreshing = st.loading && st.hero != null, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
         AuroraBackground()
         LazyColumn(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),

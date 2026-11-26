@@ -46,13 +46,19 @@ class AgentTools(
             "Get recent price statistics for a symbol: last price, change, period high/low, and returns over 1W/1M/3M where available.",
             mapOf("symbol" to mapOf("type" to "string"), "range" to mapOf("type" to "string", "enum" to rangeEnum)),
             listOf("symbol")),
-        Spec("get_watchlist", "List the symbols in the user's Capitol watchlist, with any price alerts.", emptyMap(), emptyList()),
+        Spec("get_fundamentals",
+            "Get key fundamentals for a symbol (market cap, P/E, P/B, dividend yield, beta, 52-week range, margins, ROE, debt/equity, sector, business summary). Use alongside technicals when the user asks about valuation or quality.",
+            mapOf("symbol" to mapOf("type" to "string")), listOf("symbol")),
+        Spec("get_news", "Get recent news headlines (title, publisher, time) for a symbol.",
+            mapOf("symbol" to mapOf("type" to "string")), listOf("symbol")),
+        Spec("get_watchlist", "List all of the user's Capitol watchlists and their symbols, with price and indicator alerts.", emptyMap(), emptyList()),
         Spec("scan_watchlist",
-            "Run technical analysis on every watchlist symbol and return a compact ranked table (verdict, score, price, change). Use for 'what looks best/worst on my watchlist'.",
+            "Run technical analysis on every symbol across all watchlists and return a compact ranked table (verdict, score, price, change). Use for 'what looks best/worst on my watchlist'.",
             mapOf("indicators" to mapOf("type" to "array", "items" to mapOf("type" to "string", "enum" to indicatorEnum))),
             emptyList()),
         Spec("add_to_watchlist", "Add a symbol to the user's watchlist. Only do this when the user asks.",
-            mapOf("symbol" to mapOf("type" to "string"), "name" to mapOf("type" to "string")), listOf("symbol")),
+            mapOf("symbol" to mapOf("type" to "string"), "name" to mapOf("type" to "string"),
+                "list" to mapOf("type" to "string", "description" to "Optional watchlist name; defaults to the active list")), listOf("symbol")),
         Spec("remove_from_watchlist", "Remove a symbol from the watchlist. Only do this when the user asks.",
             mapOf("symbol" to mapOf("type" to "string")), listOf("symbol")),
         Spec("get_portfolio",
@@ -62,6 +68,7 @@ class AgentTools(
     )
 
     var defaultIndicators: Set<IndicatorType> = IndicatorType.DEFAULTS
+    var params: com.capitol.app.analysis.IndicatorParams = com.capitol.app.analysis.IndicatorParams.DEFAULT
 
     /** Executes a tool; returns text for the tool_result, or throws for an error result. */
     /** A tool exposed by a connected MCP server (INDmoney), renamed for Claude. */
@@ -88,7 +95,7 @@ class AgentTools(
             val sym = input.s("symbol") ?: error("symbol is required")
             val inds = input.list("indicators").mapNotNull { IndicatorType.fromName(it) }.toSet().ifEmpty { defaultIndicators }
             val range = input.s("range")?.let { r -> ChartRange.entries.firstOrNull { it.name == r } } ?: ChartRange.Y1
-            TechnicalAnalyzer.analyze(market.history(sym, range), inds).toPlainText()
+            TechnicalAnalyzer.analyze(market.history(sym, range), inds, params).toPlainText()
         }
         "get_price_summary" -> {
             val sym = input.s("symbol") ?: error("symbol is required")
@@ -104,19 +111,30 @@ class AgentTools(
             Bars: ${c.size} (${range.interval})
             """.trimIndent()
         }
+        "get_fundamentals" -> {
+            val sym = input.s("symbol") ?: error("symbol is required")
+            market.fundamentals(sym).toPlainText()
+        }
+        "get_news" -> {
+            val sym = input.s("symbol") ?: error("symbol is required")
+            val fmt = java.text.SimpleDateFormat("dd MMM yyyy HH:mm", java.util.Locale.US)
+            market.news(sym).take(8).joinToString("\n") { n ->
+                "- ${n.title} (${n.publisher}${if (n.publishedAt > 0) ", " + fmt.format(java.util.Date(n.publishedAt * 1000)) else ""})"
+            }.ifBlank { "No recent news found for $sym." }
+        }
         "get_watchlist" -> {
-            val items = watchlist.current()
-            if (items.isEmpty()) "Watchlist is empty."
-            else items.joinToString("\n") { w ->
-                "${w.symbol} — ${w.name}" + listOfNotNull(
-                    w.alertAbove?.let { "alert above $it" }, w.alertBelow?.let { "alert below $it" },
-                ).joinToString(prefix = if (w.alertAbove != null || w.alertBelow != null) " (" else "", postfix = if (w.alertAbove != null || w.alertBelow != null) ")" else "")
+            val d = watchlist.snapshot()
+            d.lists.joinToString("\n\n") { l ->
+                "List \"${l.name}\"${if (l == d.activeList) " (active)" else ""}:\n" + (if (l.items.isEmpty()) "  (empty)" else l.items.joinToString("\n") { w ->
+                    val alerts = listOfNotNull(w.alertAbove?.let { "price ≥ $it" }, w.alertBelow?.let { "price ≤ $it" }) + w.indicatorAlerts.map { it.description }
+                    "  ${w.symbol} — ${w.name}" + if (alerts.isNotEmpty()) " (alerts: ${alerts.joinToString("; ")})" else ""
+                })
             }
         }
         "scan_watchlist" -> {
             val inds = input.list("indicators").mapNotNull { IndicatorType.fromName(it) }.toSet().ifEmpty { defaultIndicators }
-            val rows = watchlist.current().mapNotNull { w ->
-                runCatching { TechnicalAnalyzer.analyze(market.history(w.symbol, ChartRange.Y1), inds) }.getOrNull()
+            val rows = watchlist.all().mapNotNull { w ->
+                runCatching { TechnicalAnalyzer.analyze(market.history(w.symbol, ChartRange.Y1), inds, params) }.getOrNull()
             }.sortedByDescending { it.compositeScore }
             if (rows.isEmpty()) "No watchlist data available."
             else "Indicators: ${inds.joinToString { it.shortName }}\n" + rows.joinToString("\n") {
@@ -126,7 +144,7 @@ class AgentTools(
         }
         "add_to_watchlist" -> {
             val sym = input.s("symbol") ?: error("symbol is required")
-            watchlist.add(sym, input.s("name") ?: sym); "Added $sym to the watchlist."
+            watchlist.add(sym, input.s("name") ?: sym, input.s("list")); "Added $sym to ${input.s("list")?.let { "the \"$it\" list" } ?: "the active watchlist"}."
         }
         "remove_from_watchlist" -> {
             val sym = input.s("symbol") ?: error("symbol is required")
