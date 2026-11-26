@@ -30,6 +30,15 @@ Capitol is a native **Kotlin / Jetpack Compose** Android app. It pulls market da
 - **In-app updates**:
   - Installed from Google Play: the Play Core *flexible* in-app update flow.
   - Sideloaded: Capitol checks this repo's latest **GitHub Release**, downloads the APK inside the app with a progress bar, and opens the system installer.
+- **Backtesting**: see how your chosen indicator set's verdict performed on a stock over 2 years: hit rate and average move 5/10/20/60 days later, compared with random days.
+- **Timeframe confirmation**: daily and weekly verdicts side by side, flagged as aligned or conflicting.
+- **Adjustable indicator settings**: RSI period and levels, MACD, SMA/EMA lengths, Bollinger, Supertrend and more (*Settings → Indicator settings*).
+- **Compare**: up to 4 stocks side by side, with rebased performance and an indicator-by-indicator signal table.
+- **Fundamentals and news**: P/E, market cap, 52-week range, ROE and more, plus recent headlines. The AI agent can use these too.
+- **Indicator alerts and multiple watchlists**: alerts such as "RSI below 30", "Supertrend turns green" or "MACD bullish cross", sent once when the condition becomes true. Keep separate watchlists (e.g. India, US, Swing).
+- **Home-screen widget** with your active watchlist's prices and verdicts.
+- **Agent upgrades**: streaming replies, saved chats, estimated cost per answer, prompt caching, and automatic condensing of long chats.
+- **Reliability**: automatic retry with back-off, an offline copy of the last good data, pull-to-refresh, auto-refresh during market hours, and *Settings → Diagnostics* to copy an error log for bug reports.
 - **Dark and light mode**: System / Light / Dark setting, a quick toggle on the home page, and optional Material You colours on Android 12+.
 
 ## Project layout

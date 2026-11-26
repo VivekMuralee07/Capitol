@@ -31,6 +31,8 @@ import kotlinx.serialization.json.jsonObject
 class CapitolAgent(
     private val secrets: SecretStore,
     private val tools: AgentTools,
+    /** Override for tests (a local fake API); null uses api.anthropic.com. */
+    private val baseUrl: String? = null,
 ) {
     sealed interface Step {
         data class ToolCall(val name: String, val summary: String) : Step
@@ -56,7 +58,7 @@ class CapitolAgent(
             ?: throw AgentException("Add your Anthropic API key in Settings → AI Agent to enable the agent.")
         if (client == null || clientKey != key) {
             client?.close()
-            client = AnthropicOkHttpClient.builder().apiKey(key).build()
+            client = AnthropicOkHttpClient.builder().apiKey(key).apply { baseUrl?.let { baseUrl(it) } }.build()
             clientKey = key
         }
         return client!!
