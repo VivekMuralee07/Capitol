@@ -1,0 +1,433 @@
+package com.capitol.app.ui.analysis
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.CandlestickChart
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.automirrored.filled.ShowChart
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.capitol.app.analysis.AnalysisReport
+import com.capitol.app.analysis.IndicatorCategory
+import com.capitol.app.analysis.IndicatorResult
+import com.capitol.app.analysis.IndicatorType
+import com.capitol.app.analysis.Pane
+import com.capitol.app.analysis.Signal
+import com.capitol.app.data.market.ChartRange
+import com.capitol.app.data.market.isIntraday
+import com.capitol.app.ui.components.AnimatedNumber
+import com.capitol.app.ui.components.CapitolCard
+import com.capitol.app.ui.components.ChangeText
+import com.capitol.app.ui.components.ErrorBanner
+import com.capitol.app.ui.components.IndicatorPane
+import com.capitol.app.ui.components.PriceChart
+import com.capitol.app.ui.components.PriceChartMode
+import com.capitol.app.ui.components.SectionTitle
+import com.capitol.app.ui.components.SentimentGauge
+import com.capitol.app.ui.components.SignalChip
+import com.capitol.app.ui.components.signalColor
+import com.capitol.app.ui.components.roleColor
+import com.capitol.app.ui.home.ShimmerBox
+import com.capitol.app.ui.home.Staggered
+import com.capitol.app.ui.theme.CapitolColors
+import com.capitol.app.ui.theme.NumberStyle
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onAskAi: (String) -> Unit) {
+    val st by vm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(initialSymbol) { if (initialSymbol != null && initialSymbol != st.symbol) vm.open(initialSymbol) }
+    var showFilter by rememberSaveable { mutableStateOf(false) }
+    var chartMode by rememberSaveable { mutableStateOf(PriceChartMode.CANDLES) }
+
+    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        SearchBar(st, vm)
+        if (st.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        LazyColumn(
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            st.error?.let { item { ErrorBanner(it) } }
+            if (st.symbol == null) {
+                item { EmptyState(vm::open) }
+                return@LazyColumn
+            }
+            val series = st.series
+            item {
+                if (series == null) ShimmerBox(Modifier.fillMaxWidth().height(120.dp))
+                else Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(series.name, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text("${series.symbol} · ${series.exchange} · ${series.currency}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(4.dp))
+                        AnimatedNumber(series.regularMarketPrice, fontSize = 28)
+                        ChangeText(series.change, series.changePercent)
+                    }
+                    IconButton(vm::refresh) { Icon(Icons.Default.Refresh, "Refresh") }
+                    IconButton({ vm.toggleWatchlist() }) {
+                        Icon(if (st.inWatchlist) Icons.Default.Star else Icons.Default.StarBorder, "Watchlist",
+                            tint = if (st.inWatchlist) CapitolColors.market.neutral else MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+            }
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(ChartRange.entries) { r -> FilterChip(r == st.range, { vm.setRange(r) }, { Text(r.label) }) }
+                    item {
+                        IconButton({ chartMode = if (chartMode == PriceChartMode.CANDLES) PriceChartMode.LINE else PriceChartMode.CANDLES }) {
+                            Icon(if (chartMode == PriceChartMode.CANDLES) Icons.AutoMirrored.Filled.ShowChart else Icons.Default.CandlestickChart, "Chart type")
+                        }
+                    }
+                }
+            }
+            val report = st.report
+            if (series != null) {
+                item {
+                    val overlays = report?.results?.filter { it.type.pane == Pane.OVERLAY && it.available && it.type != IndicatorType.PIVOTS && it.type != IndicatorType.FIBONACCI }
+                        ?.flatMap { it.lines }.orEmpty()
+                    val levels = report?.results?.filter { it.type == IndicatorType.PIVOTS || it.type == IndicatorType.FIBONACCI }
+                        ?.flatMap { it.levels }.orEmpty()
+                    CapitolCard(padding = PaddingValues(8.dp)) {
+                        PriceChart(series.candles, overlays = overlays, levels = levels, mode = chartMode, intraday = st.range.isIntraday, height = 300.dp)
+                        if (overlays.isNotEmpty()) Legend(overlays.map { it.name to it.role })
+                    }
+                }
+            }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${st.selected.size} indicators selected", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    Button({ showFilter = true }) {
+                        Icon(Icons.Default.FilterList, null); Spacer(Modifier.width(6.dp)); Text("Filter")
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                SelectedChips(st.selected, vm::toggle)
+            }
+            if (report != null) {
+                item { VerdictCard(report) }
+                item { SummaryCard(report, onAskAi = {
+                    onAskAi("Explain the technical picture for ${report.symbol} using ${st.selected.joinToString { it.shortName }}. What are the key levels and what would change the view?")
+                }) }
+                if (report.keyLevels.isNotEmpty()) item { LevelsCard(report) }
+                item { SectionTitle("Indicator breakdown") }
+                report.results.forEachIndexed { i, r ->
+                    item(key = r.type.name) { Staggered(i) { IndicatorCard(r) } }
+                }
+            }
+        }
+    }
+
+    if (showFilter) {
+        ModalBottomSheet(onDismissRequest = { showFilter = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+            IndicatorFilterSheet(st.selected, vm::toggle, vm::setIndicators, onSave = { vm.saveAsDefault() }, onDone = { showFilter = false })
+        }
+    }
+}
+
+@Composable
+private fun SearchBar(st: AnalysisState, vm: AnalysisViewModel) {
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        OutlinedTextField(
+            value = st.query, onValueChange = vm::onQuery,
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Search stock, index, ETF… e.g. Infosys, TSLA") },
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            singleLine = true, shape = RoundedCornerShape(18.dp),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { vm.open(st.suggestions.firstOrNull()?.symbol ?: st.query) }),
+        )
+        AnimatedVisibility(st.suggestions.isNotEmpty()) {
+            CapitolCard(Modifier.fillMaxWidth().padding(top = 6.dp), padding = PaddingValues(4.dp)) {
+                st.suggestions.take(7).forEach { m ->
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { vm.open(m.symbol) }.padding(12.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(m.symbol, style = MaterialTheme.typography.titleSmall)
+                            Text(m.name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        }
+                        Text("${m.exchange} · ${m.type}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EmptyState(onOpen: (String) -> Unit) {
+    CapitolCard {
+        Icon(Icons.Default.BarChart, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
+        Spacer(Modifier.height(8.dp))
+        Text("Analyse any stock", style = MaterialTheme.typography.titleLarge)
+        Text("Search above, then pick the indicators you care about. Capitol explains what each one says right now and combines them into one verdict.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(12.dp))
+        Text("Popular", style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("RELIANCE.NS", "INFY.NS", "TATAMOTORS.NS", "^NSEI", "AAPL", "NVDA", "MSFT", "BTC-USD").forEach {
+                AssistChip({ onOpen(it) }, { Text(it) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun Legend(items: List<Pair<String, com.capitol.app.analysis.LineRole>>) {
+    val mc = CapitolColors.market
+    val primary = MaterialTheme.colorScheme.primary
+    LazyRow(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        items(items) { (name, role) ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(10.dp, 3.dp).background(mc.roleColor(role, primary)))
+                Spacer(Modifier.width(4.dp))
+                Text(name, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SelectedChips(selected: Set<IndicatorType>, onToggle: (IndicatorType) -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        IndicatorType.entries.filter { it in selected }.forEach { t ->
+            FilterChip(true, { onToggle(t) }, { Text(t.shortName) })
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun IndicatorFilterSheet(
+    selected: Set<IndicatorType>,
+    onToggle: (IndicatorType) -> Unit,
+    onSet: (Set<IndicatorType>) -> Unit,
+    onSave: () -> Unit,
+    onDone: () -> Unit,
+) {
+    LazyColumn(Modifier.fillMaxWidth().navigationBarsPadding(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)) {
+        item {
+            Text("Choose indicators", style = MaterialTheme.typography.titleLarge)
+            Text("Select as many as you like. The verdict and explanation adapt to exactly this set.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(12.dp))
+            Text("Presets", style = MaterialTheme.typography.labelLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Presets.list.forEach { (name, set) -> AssistChip({ onSet(set) }, { Text(name) }) }
+                AssistChip({ onSet(setOf()) }, { Text("Clear") })
+            }
+        }
+        IndicatorType.byCategory().forEach { (cat, types) ->
+            item {
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(cat.label, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    val allOn = types.all { it in selected }
+                    TextButton({ onSet(if (allOn) selected - types.toSet() else selected + types) }) { Text(if (allOn) "None" else "All") }
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    types.forEach { t -> FilterChip(t in selected, { onToggle(t) }, { Text(t.title.substringBefore(" (")) }) }
+                }
+            }
+        }
+        item {
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton({ onSave() }, Modifier.weight(1f)) { Text("Save as default") }
+                Button(onDone, Modifier.weight(1f)) { Text("Apply (${selected.size})") }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun VerdictCard(r: AnalysisReport) {
+    val c = signalColor(r.verdict)
+    CapitolCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Capitol verdict", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(r.verdict.label, style = MaterialTheme.typography.headlineMedium, color = c)
+                Text("Score ${"%+.2f".format(r.compositeScore)} · Agreement ${r.confidence}%", style = NumberStyle.copy(fontSize = 12.sp))
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Counter("Bullish", r.bullishCount, CapitolColors.market.bull)
+                    Counter("Neutral", r.neutralCount, CapitolColors.market.neutral)
+                    Counter("Bearish", r.bearishCount, CapitolColors.market.bear)
+                }
+            }
+            SentimentGauge(r.compositeScore, size = 140.dp)
+        }
+        if (r.categoryScores.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            r.categoryScores.forEach { (cat, s) -> CategoryBar(cat, s) }
+        }
+    }
+}
+
+@Composable
+private fun Counter(label: String, n: Int, color: androidx.compose.ui.graphics.Color) {
+    Column {
+        Text("$n", style = MaterialTheme.typography.titleLarge, color = color)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun CategoryBar(cat: IndicatorCategory, score: Double) {
+    val sig = Signal.fromScore(score)
+    val c = signalColor(sig)
+    val frac by animateFloatAsState(((score + 2) / 4).toFloat().coerceIn(0.03f, 1f), tween(1000), label = "cat")
+    Column(Modifier.padding(vertical = 4.dp)) {
+        Row {
+            Text(cat.label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+            Text(sig.label, style = MaterialTheme.typography.labelMedium, color = c)
+        }
+        Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+            Box(Modifier.fillMaxWidth(frac).height(6.dp).clip(RoundedCornerShape(3.dp)).background(c))
+        }
+    }
+}
+
+@Composable
+private fun SummaryCard(r: AnalysisReport, onAskAi: () -> Unit) {
+    CapitolCard {
+        Text("What it all means", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(6.dp))
+        Text(r.summary, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(10.dp))
+        OutlinedButton(onAskAi) { Icon(Icons.Default.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text("Ask the AI agent to go deeper") }
+    }
+}
+
+@Composable
+private fun LevelsCard(r: AnalysisReport) {
+    val mc = CapitolColors.market
+    CapitolCard {
+        Text("Key levels", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(6.dp))
+        (r.keyLevels.filter { !it.isSupport }.reversed() + r.keyLevels.filter { it.isSupport }).forEach { l ->
+            Row(Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(if (l.isSupport) mc.bull else mc.bear))
+                Spacer(Modifier.width(8.dp))
+                Text(l.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Text("%,.2f".format(l.price), style = NumberStyle.copy(fontSize = 13.sp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (l.isSupport) "support" else "resistance", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun IndicatorCard(r: IndicatorResult) {
+    var expanded by remember { mutableStateOf(false) }
+    CapitolCard(Modifier.fillMaxWidth().animateContentSize()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(r.type.title, style = MaterialTheme.typography.titleSmall)
+                Text(r.type.category.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (r.available) SignalChip(r.signal)
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(r.headline, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+        if (r.metrics.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                r.metrics.forEach { m ->
+                    Column(Modifier.clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 10.dp, vertical = 6.dp)) {
+                        Text(m.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(m.value, style = NumberStyle.copy(fontSize = 13.sp))
+                    }
+                }
+            }
+        }
+        if (r.available && r.type.pane == Pane.SEPARATE && r.lines.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            IndicatorPane(r.lines, levels = r.levels, height = 110.dp)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("What it says now", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        Text(r.interpretation, style = MaterialTheme.typography.bodyMedium)
+        Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (expanded) "Hide explainer" else "How does ${r.type.shortName} work?", style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+            Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, tint = MaterialTheme.colorScheme.primary)
+        }
+        if (expanded) {
+            HorizontalDivider(Modifier.padding(vertical = 6.dp))
+            Text("What it measures", style = MaterialTheme.typography.labelLarge)
+            Text(r.type.about, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(6.dp))
+            Text("How to read it", style = MaterialTheme.typography.labelLarge)
+            Text(r.type.howToRead, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
