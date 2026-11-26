@@ -3,6 +3,8 @@ package com.capitol.app.agent
 import com.capitol.app.analysis.IndicatorType
 import com.capitol.app.analysis.TechnicalAnalyzer
 import com.capitol.app.data.broker.PortfolioRepository
+import com.capitol.app.data.mcp.IndMoneyMcp
+import com.capitol.app.data.mcp.McpTool
 import com.capitol.app.data.market.ChartRange
 import com.capitol.app.data.market.MarketRepository
 import com.capitol.app.data.watchlist.WatchlistStore
@@ -19,6 +21,7 @@ class AgentTools(
     private val market: MarketRepository,
     private val watchlist: WatchlistStore,
     private val portfolio: PortfolioRepository,
+    private val indmoney: IndMoneyMcp,
 ) {
     data class Spec(val name: String, val description: String, val properties: Map<String, Any>, val required: List<String>)
 
@@ -61,7 +64,20 @@ class AgentTools(
     var defaultIndicators: Set<IndicatorType> = IndicatorType.DEFAULTS
 
     /** Executes a tool; returns text for the tool_result, or throws for an error result. */
-    suspend fun execute(name: String, input: JsonObject): String = when (name) {
+    /** A tool exposed by a connected MCP server (INDmoney), renamed for Claude. */
+    data class ExternalTool(val claudeName: String, val tool: McpTool)
+
+    @Volatile private var external: Map<String, McpTool> = emptyMap()
+
+    /** INDmoney MCP tools, when the user has connected INDmoney. Failures just hide the tools. */
+    suspend fun externalTools(): List<ExternalTool> {
+        if (!indmoney.isConnected) { external = emptyMap(); return emptyList() }
+        val list = runCatching { indmoney.tools() }.getOrDefault(emptyList()).map { ExternalTool(claudeToolName(it.name), it) }
+        external = list.associate { it.claudeName to it.tool }
+        return list
+    }
+
+    suspend fun execute(name: String, input: JsonObject): String = external[name]?.let { indmoney.call(it.name, input) } ?: when (name) {
         "search_symbol" -> {
             val q = input.s("query") ?: error("query is required")
             val r = market.search(q)
@@ -131,6 +147,12 @@ class AgentTools(
         }
         "list_indicators" -> IndicatorType.entries.joinToString("\n") { "${it.name} (${it.category.label}): ${it.about}" }
         else -> error("Unknown tool $name")
+    }
+
+    companion object {
+        const val INDMONEY_PREFIX = "indmoney__"
+        /** Claude tool names must match ^[a-zA-Z0-9_-]{1,64}$. */
+        fun claudeToolName(mcpName: String) = (INDMONEY_PREFIX + mcpName.replace(Regex("[^a-zA-Z0-9_-]"), "_")).take(64)
     }
 
     private fun JsonObject.s(k: String) = (this[k] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
