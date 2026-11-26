@@ -50,6 +50,7 @@ class AppContainer(context: Context) {
     val indmoneyMcp = IndMoneyMcp(http, secrets)
     val agentTools = AgentTools(market, watchlist, portfolio, indmoneyMcp)
     val agent = CapitolAgent(secrets, agentTools)
+    init { agentTools.analyticsLoader = { h -> com.capitol.app.analysis.PortfolioLoader.load(this, h) } }
     val chats = com.capitol.app.agent.ChatStore(java.io.File(context.filesDir, "chats"))
     val updates = UpdateManager(context, http)
 }

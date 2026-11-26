@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.automirrored.filled.ShowChart
@@ -100,6 +101,7 @@ import com.capitol.app.ui.home.ShimmerBox
 import com.capitol.app.ui.home.Staggered
 import com.capitol.app.ui.theme.CapitolColors
 import com.capitol.app.ui.theme.NumberStyle
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -134,6 +136,7 @@ fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onCompare: (St
                         AnimatedNumber(series.regularMarketPrice, fontSize = 28)
                         ChangeText(series.change, series.changePercent)
                     }
+                    ShareMenu(st)
                     IconButton(vm::refresh) { Icon(Icons.Default.Refresh, "Refresh") }
                     IconButton({ vm.toggleWatchlist() }) {
                         Icon(if (st.inWatchlist) Icons.Default.Star else Icons.Default.StarBorder, "Watchlist",
@@ -658,5 +661,29 @@ private fun TradePlannerCard(
             confirmButton = { TextButton({ onDefaults(cap.toDoubleOrNull() ?: st.tradeCapital, risk.toDoubleOrNull() ?: st.tradeRiskPct); editing = false }) { Text("Save") } },
             dismissButton = { TextButton({ editing = false }) { Text("Cancel") } },
         )
+    }
+}
+
+@Composable
+private fun ShareMenu(st: AnalysisState) {
+    val report = st.report ?: return
+    val series = st.series ?: return
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var open by remember { mutableStateOf(false) }
+    val content = com.capitol.app.export.ReportContent(report, series, st.tradePlan, st.fundamentals)
+    val exporter = remember { com.capitol.app.export.ReportExporter(ctx.applicationContext) }
+    fun export(make: (com.capitol.app.export.ReportExporter) -> java.io.File, mime: String) = scope.launch {
+        runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { make(exporter) } }
+            .onSuccess { exporter.share(it, mime) }
+            .onFailure { com.capitol.app.diagnostics.Diagnostics.error("Export", "export failed: ${it.message}", it) }
+    }
+    androidx.compose.foundation.layout.Box {
+        IconButton({ open = true }) { Icon(Icons.Default.Share, "Share") }
+        androidx.compose.material3.DropdownMenu(open, { open = false }) {
+            androidx.compose.material3.DropdownMenuItem({ Text("Share as image") }, { open = false; export({ it.toPng(content) }, "image/png") })
+            androidx.compose.material3.DropdownMenuItem({ Text("Share as PDF") }, { open = false; export({ it.toPdf(content) }, "application/pdf") })
+            androidx.compose.material3.DropdownMenuItem({ Text("Share as text") }, { open = false; exporter.shareText(exporter.toText(content)) })
+        }
     }
 }

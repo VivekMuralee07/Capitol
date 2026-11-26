@@ -311,3 +311,24 @@ fun SentimentGauge(score: Double, modifier: Modifier = Modifier, size: Dp = 200.
         }
     }
 }
+
+/** Animated donut chart for allocations. */
+@Composable
+fun DonutChart(values: List<Pair<Double, Color>>, modifier: Modifier = Modifier, thickness: Dp = 22.dp) {
+    val sweep = remember(values) { Animatable(0f) }
+    LaunchedEffect(values) { sweep.animateTo(1f, tween(1000, easing = FastOutSlowInEasing)) }
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    Canvas(modifier) {
+        val total = values.sumOf { it.first }.takeIf { it > 0 } ?: return@Canvas
+        val stroke = thickness.toPx()
+        val d = min(size.width, size.height) - stroke
+        val tl = Offset((size.width - d) / 2, (size.height - d) / 2)
+        drawArc(track, 0f, 360f, false, tl, Size(d, d), style = Stroke(stroke))
+        var start = -90f
+        values.forEach { (v, col) ->
+            val a = (v / total * 360f).toFloat() * sweep.value
+            drawArc(col, start, (a - 1.5f).coerceAtLeast(0.5f), false, tl, Size(d, d), style = Stroke(stroke))
+            start += a
+        }
+    }
+}

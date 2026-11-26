@@ -267,6 +267,7 @@ class CapitolAgent(
             "get_calendar" -> "Checking earnings & dividend dates"
             "plan_trade" -> "Planning a trade on ${s("symbol")}"
             "run_screener" -> "Screening ${s("universe")}"
+            "get_portfolio_analytics" -> "Analysing your portfolio"
             "get_fundamentals" -> "Fetching fundamentals for ${s("symbol")}"
             "get_news" -> "Reading news on ${s("symbol")}"
             "scan_watchlist" -> "Scanning your whole watchlist"

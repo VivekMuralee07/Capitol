@@ -87,7 +87,8 @@ object TradePlanner {
         val zoneEdge = nearest?.second?.let { if (long) max(it, entry - 0.5 * atr) else min(it, entry + 0.5 * atr) } ?: (entry - sign * 0.5 * atr)
         val (zLow, zHigh) = if (long) zoneEdge to entry else entry to zoneEdge
 
-        val targets = profit.filter { abs(it.second - entry) >= 0.5 * risk }
+        // Only levels that pay at least the risk; fill with 2R/3R when there aren't enough.
+        val targets = profit.filter { abs(it.second - entry) >= 1.0 * risk }
             .distinctBy { "%.2f".format(it.second) }.take(3)
             .map { TradeTarget(it.first, it.second, abs(it.second - entry) / risk) }
             .toMutableList()

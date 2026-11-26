@@ -1,6 +1,7 @@
 package com.capitol.app.agent
 
 import com.capitol.app.analysis.IndicatorType
+import com.capitol.app.analysis.Signal
 import com.capitol.app.analysis.TechnicalAnalyzer
 import com.capitol.app.data.broker.PortfolioRepository
 import com.capitol.app.data.mcp.IndMoneyMcp
@@ -79,11 +80,16 @@ class AgentTools(
         Spec("get_portfolio",
             "Get the user's holdings from connected brokers (Zerodha Kite, INDmoney) or imported CSV: symbol, qty, average price, LTP and P&L. Read-only.",
             emptyMap(), emptyList()),
+        Spec("get_portfolio_analytics",
+            "Portfolio-level analysis of the user's holdings: allocation by holding and sector, concentration, diversification score, value-weighted technical health, best/worst performers and risk warnings.",
+            emptyMap(), emptyList()),
         Spec("list_indicators", "List every indicator Capitol supports, with a one-line description of each.", emptyMap(), emptyList()),
     )
 
     var defaultIndicators: Set<IndicatorType> = IndicatorType.DEFAULTS
     var params: com.capitol.app.analysis.IndicatorParams = com.capitol.app.analysis.IndicatorParams.DEFAULT
+    /** Set by the app container: computes portfolio analytics for holdings. */
+    var analyticsLoader: (suspend (List<com.capitol.app.data.broker.Holding>) -> List<com.capitol.app.analysis.CurrencyAnalytics>)? = null
     var tradeCapital: Double = 100_000.0
     var tradeRiskPct: Double = 1.0
 
@@ -209,6 +215,25 @@ class AgentTools(
                     "\nTotal (${t.currency}): invested ${"%.2f".format(t.invested)}, current ${"%.2f".format(t.current)}, P&L ${"%+.2f".format(t.pnlPercent)}%"
                 } +
                     st.errors.joinToString("") { "\nError: $it" })
+            }
+        }
+        "get_portfolio_analytics" -> {
+            if (!portfolio.anyConnected) "No broker connected. The user can connect Zerodha Kite or INDmoney, or import a CSV, in the Portfolio tab."
+            else {
+                portfolio.refresh()
+                val list = analyticsLoader?.invoke(portfolio.state.value.holdings).orEmpty()
+                if (list.isEmpty()) "No holdings to analyse." else list.joinToString("\n\n") { a ->
+                    buildString {
+                        appendLine("${a.currency} portfolio: total ${"%,.0f".format(a.total)}")
+                        appendLine("Allocation: " + a.byHolding.joinToString { "${it.label} ${"%.1f".format(it.pct)}%" })
+                        appendLine("Sectors: " + a.bySector.joinToString { "${it.label} ${"%.0f".format(it.pct)}%" })
+                        appendLine("Largest ${"%.0f".format(a.largestPct)}%, top-5 ${"%.0f".format(a.top5Pct)}%, effective holdings ${"%.1f".format(a.effectiveHoldings)}, diversification ${a.diversificationScore}/100")
+                        a.technicalScore?.let { appendLine("Value-weighted technical score ${"%+.2f".format(it)} (${Signal.fromScore(it).label})") }
+                        appendLine("Holdings health: " + a.health.joinToString { "${it.symbol} ${it.verdict.label} (${"%.0f".format(it.weightPct)}%)" })
+                        a.oneYearChangePct?.let { appendLine("Current holdings over the past year: ${"%+.1f".format(it)}%") }
+                        a.warnings.forEach { appendLine("Warning: $it") }
+                    }
+                }
             }
         }
         "list_indicators" -> IndicatorType.entries.joinToString("\n") { "${it.name} (${it.category.label}): ${it.about}" }
