@@ -98,6 +98,7 @@ class AgentViewModel(private val c: AppContainer) : ViewModel() {
                 }
                 _state.value = AgentState(_state.value.items + ChatItem.Assistant(answer), busy = false)
             } catch (e: Exception) {
+                com.capitol.app.diagnostics.Diagnostics.error("Agent", "ask failed: ${e.message}", e)
                 _state.value = AgentState(_state.value.items + ChatItem.Error(e.message ?: "Something went wrong"), busy = false)
             }
         }

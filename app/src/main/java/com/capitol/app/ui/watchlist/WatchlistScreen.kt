@@ -93,8 +93,8 @@ class WatchlistViewModel(private val c: AppContainer) : ViewModel() {
             }
         }
         viewModelScope.launch {
-            c.settings.settings.map { it.defaultIndicators }.distinctUntilChanged().drop(1).collect { inds ->
-                cache.replaceAll { _, (s, _) -> s to s?.let { TechnicalAnalyzer.analyze(it, inds) } }
+            c.settings.settings.map { it.defaultIndicators to it.indicatorParams }.distinctUntilChanged().drop(1).collect { (inds, params) ->
+                cache.replaceAll { _, (s, _) -> s to s?.let { TechnicalAnalyzer.analyze(it, inds, params) } }
                 publish(c.watchlist.current())
             }
         }
@@ -108,11 +108,12 @@ class WatchlistViewModel(private val c: AppContainer) : ViewModel() {
 
     private suspend fun load(items: List<WatchItem>, force: Boolean = false) {
         _state.value = _state.value.copy(loading = true)
-        val inds = c.settings.settings.first().defaultIndicators
+        val st = c.settings.settings.first()
+        val inds = st.defaultIndicators
         items.map { w ->
             viewModelScope.async {
                 val s = runCatching { c.market.history(w.symbol, ChartRange.Y1, force) }.getOrNull()
-                cache[w.symbol] = s to s?.let { TechnicalAnalyzer.analyze(it, inds) }
+                cache[w.symbol] = s to s?.let { TechnicalAnalyzer.analyze(it, inds, st.indicatorParams) }
             }
         }.awaitAll()
         _state.value = _state.value.copy(loading = false)

@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -145,6 +147,7 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit, onStartUpdate: () -> Uni
                 }
             }
         }
+        item { IndicatorParamsCard(s.indicatorParams) { scope.launch { c.settings.setIndicatorParams(it) } } }
         item {
             CapitolCard {
                 Text("App updates", style = MaterialTheme.typography.titleMedium)
@@ -167,6 +170,7 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit, onStartUpdate: () -> Uni
                 OutlinedButton({ scope.launch { c.updates.check() } }) { Text("Check for updates") }
             }
         }
+        item { DiagnosticsCard() }
         item {
             CapitolCard {
                 Text("About", style = MaterialTheme.typography.titleMedium)
@@ -185,5 +189,112 @@ private fun ToggleRow(title: String, subtitle: String, checked: Boolean, onChang
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Switch(checked, onChange)
+    }
+}
+
+/** Settings → Diagnostics: view, copy, share or clear the on-device error log. */
+@Composable
+private fun DiagnosticsCard() {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    var report by remember { mutableStateOf(com.capitol.app.diagnostics.Diagnostics.report()) }
+    var copied by remember { mutableStateOf(false) }
+    CapitolCard {
+        Text("Diagnostics", style = MaterialTheme.typography.titleMedium)
+        Text("If something goes wrong, copy this log and send it when reporting the problem. It never contains your API keys or tokens.",
+            style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(8.dp))
+        Text(report.lines().takeLast(12).joinToString("\n"), style = com.capitol.app.ui.theme.NumberStyle.copy(fontSize = androidx.compose.ui.unit.TextUnit(10f, androidx.compose.ui.unit.TextUnitType.Sp)),
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 12)
+        Spacer(Modifier.height(8.dp))
+        Row {
+            Button({ clipboard.setText(androidx.compose.ui.text.AnnotatedString(report)); copied = true }) { Text(if (copied) "Copied ✓" else "Copy log") }
+            TextButton({
+                ctx.startActivity(android.content.Intent.createChooser(
+                    android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                        .putExtra(android.content.Intent.EXTRA_SUBJECT, "Capitol diagnostics")
+                        .putExtra(android.content.Intent.EXTRA_TEXT, report), "Share log"))
+            }) { Text("Share") }
+            TextButton({ com.capitol.app.diagnostics.Diagnostics.clear(); report = com.capitol.app.diagnostics.Diagnostics.report(); copied = false }) { Text("Clear") }
+        }
+    }
+}
+
+private data class ParamField(val group: String, val label: String, val get: (com.capitol.app.analysis.IndicatorParams) -> Double,
+                              val set: (com.capitol.app.analysis.IndicatorParams, Double) -> com.capitol.app.analysis.IndicatorParams, val decimal: Boolean = false)
+
+private val PARAM_FIELDS = listOf(
+    ParamField("Moving averages", "SMA short", { it.smaShort.toDouble() }, { p, v -> p.copy(smaShort = v.toInt()) }),
+    ParamField("Moving averages", "SMA medium", { it.smaMid.toDouble() }, { p, v -> p.copy(smaMid = v.toInt()) }),
+    ParamField("Moving averages", "SMA long", { it.smaLong.toDouble() }, { p, v -> p.copy(smaLong = v.toInt()) }),
+    ParamField("Moving averages", "EMA fast", { it.emaFast.toDouble() }, { p, v -> p.copy(emaFast = v.toInt()) }),
+    ParamField("Moving averages", "EMA slow", { it.emaSlow.toDouble() }, { p, v -> p.copy(emaSlow = v.toInt()) }),
+    ParamField("MACD", "Fast", { it.macdFast.toDouble() }, { p, v -> p.copy(macdFast = v.toInt()) }),
+    ParamField("MACD", "Slow", { it.macdSlow.toDouble() }, { p, v -> p.copy(macdSlow = v.toInt()) }),
+    ParamField("MACD", "Signal", { it.macdSignal.toDouble() }, { p, v -> p.copy(macdSignal = v.toInt()) }),
+    ParamField("RSI", "Period", { it.rsiPeriod.toDouble() }, { p, v -> p.copy(rsiPeriod = v.toInt()) }),
+    ParamField("RSI", "Overbought", { it.rsiOverbought.toDouble() }, { p, v -> p.copy(rsiOverbought = v.toInt()) }),
+    ParamField("RSI", "Oversold", { it.rsiOversold.toDouble() }, { p, v -> p.copy(rsiOversold = v.toInt()) }),
+    ParamField("Bollinger Bands", "Period", { it.bbPeriod.toDouble() }, { p, v -> p.copy(bbPeriod = v.toInt()) }),
+    ParamField("Bollinger Bands", "Std dev", { it.bbStdDev }, { p, v -> p.copy(bbStdDev = v) }, decimal = true),
+    ParamField("Supertrend", "ATR period", { it.supertrendPeriod.toDouble() }, { p, v -> p.copy(supertrendPeriod = v.toInt()) }),
+    ParamField("Supertrend", "Multiplier", { it.supertrendMultiplier }, { p, v -> p.copy(supertrendMultiplier = v) }, decimal = true),
+    ParamField("Oscillators", "Stochastic", { it.stochPeriod.toDouble() }, { p, v -> p.copy(stochPeriod = v.toInt()) }),
+    ParamField("Oscillators", "CCI", { it.cciPeriod.toDouble() }, { p, v -> p.copy(cciPeriod = v.toInt()) }),
+    ParamField("Oscillators", "Williams %R", { it.williamsPeriod.toDouble() }, { p, v -> p.copy(williamsPeriod = v.toInt()) }),
+    ParamField("Oscillators", "MFI", { it.mfiPeriod.toDouble() }, { p, v -> p.copy(mfiPeriod = v.toInt()) }),
+    ParamField("Oscillators", "ROC", { it.rocPeriod.toDouble() }, { p, v -> p.copy(rocPeriod = v.toInt()) }),
+    ParamField("Volatility & trend", "ATR", { it.atrPeriod.toDouble() }, { p, v -> p.copy(atrPeriod = v.toInt()) }),
+    ParamField("Volatility & trend", "ADX", { it.adxPeriod.toDouble() }, { p, v -> p.copy(adxPeriod = v.toInt()) }),
+)
+
+/** Settings → Indicator settings: edit periods/thresholds used everywhere in the app. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun IndicatorParamsCard(current: com.capitol.app.analysis.IndicatorParams, onSave: (com.capitol.app.analysis.IndicatorParams) -> Unit) {
+    var editing by remember { mutableStateOf(false) }
+    CapitolCard {
+        Text("Indicator settings", style = MaterialTheme.typography.titleMedium)
+        Text("RSI ${current.rsiPeriod} (${current.rsiOversold}/${current.rsiOverbought}) · MACD ${current.macdFast}/${current.macdSlow}/${current.macdSignal} · " +
+            "SMA ${current.smaShort}/${current.smaMid}/${current.smaLong} · Supertrend ${current.supertrendPeriod}/${current.g(current.supertrendMultiplier)}",
+            style = MaterialTheme.typography.bodySmall)
+        Row {
+            TextButton({ editing = true }) { Text("Edit") }
+            if (current != com.capitol.app.analysis.IndicatorParams.DEFAULT) TextButton({ onSave(com.capitol.app.analysis.IndicatorParams.DEFAULT) }) { Text("Reset to defaults") }
+        }
+    }
+    if (editing) {
+        val texts = remember { androidx.compose.runtime.mutableStateMapOf<String, String>().apply {
+            PARAM_FIELDS.forEach { f -> put(f.group + f.label, current.g(f.get(current))) }
+        } }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { editing = false },
+            title = { Text("Indicator settings") },
+            text = {
+                LazyColumn(Modifier.height(420.dp)) {
+                    PARAM_FIELDS.groupBy { it.group }.forEach { (group, fields) ->
+                        item {
+                            Text(group, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                fields.forEach { f ->
+                                    OutlinedTextField(texts[f.group + f.label] ?: "", { texts[f.group + f.label] = it },
+                                        Modifier.width(120.dp), label = { Text(f.label) }, singleLine = true,
+                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                            keyboardType = if (f.decimal) androidx.compose.ui.text.input.KeyboardType.Decimal else androidx.compose.ui.text.input.KeyboardType.Number))
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton({
+                    var p = current
+                    PARAM_FIELDS.forEach { f -> texts[f.group + f.label]?.toDoubleOrNull()?.let { p = f.set(p, it) } }
+                    onSave(p.sanitized()); editing = false
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton({ editing = false }) { Text("Cancel") } },
+        )
     }
 }

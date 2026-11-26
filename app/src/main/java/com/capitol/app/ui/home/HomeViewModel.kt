@@ -48,7 +48,7 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
         viewModelScope.launch {
             combine(
                 c.watchlist.items.map { items -> items.map { it.symbol } },
-                c.settings.settings.map { it.defaultIndicators },
+                c.settings.settings.map { it.defaultIndicators to it.indicatorParams },
             ) { symbols, inds -> symbols to inds }
                 .distinctUntilChanged()
                 .drop(1) // the initial value is already handled by refresh()
@@ -57,13 +57,14 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     /** Reloads only the watchlist-driven sections (movers, heatmap, mood, breadth). */
-    private suspend fun refreshWatch(symbols: List<String>, inds: Set<com.capitol.app.analysis.IndicatorType>) {
+    private suspend fun refreshWatch(symbols: List<String>, ip: Pair<Set<com.capitol.app.analysis.IndicatorType>, com.capitol.app.analysis.IndicatorParams>) {
+        val (inds, params) = ip
         val series = coroutineScope {
             symbols.map { s -> async { runCatching { c.market.history(s, ChartRange.Y1) }.getOrNull() } }.awaitAll().filterNotNull()
         }
         _state.value = _state.value.copy(
             watch = series.map { s -> QuoteSnapshot(s.symbol, s.name, s.regularMarketPrice, s.change, s.changePercent, s.currency, s.closes.takeLast(40)) },
-            signals = series.map { TechnicalAnalyzer.analyze(it, inds) }.sortedByDescending { it.compositeScore },
+            signals = series.map { TechnicalAnalyzer.analyze(it, inds, params) }.sortedByDescending { it.compositeScore },
         )
     }
 
@@ -91,7 +92,7 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
         val hero = heroJob.await()
         val idx = idxJob.await()
         val watchSeries = watchJob.await()
-        val signals = watchSeries.map { TechnicalAnalyzer.analyze(it, settings.defaultIndicators) }
+        val signals = watchSeries.map { TechnicalAnalyzer.analyze(it, settings.defaultIndicators, settings.indicatorParams) }
         _state.value = _state.value.copy(
             loading = false,
             hero = hero ?: _state.value.hero,

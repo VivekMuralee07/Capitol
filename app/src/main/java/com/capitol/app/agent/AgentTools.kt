@@ -62,6 +62,7 @@ class AgentTools(
     )
 
     var defaultIndicators: Set<IndicatorType> = IndicatorType.DEFAULTS
+    var params: com.capitol.app.analysis.IndicatorParams = com.capitol.app.analysis.IndicatorParams.DEFAULT
 
     /** Executes a tool; returns text for the tool_result, or throws for an error result. */
     /** A tool exposed by a connected MCP server (INDmoney), renamed for Claude. */
@@ -88,7 +89,7 @@ class AgentTools(
             val sym = input.s("symbol") ?: error("symbol is required")
             val inds = input.list("indicators").mapNotNull { IndicatorType.fromName(it) }.toSet().ifEmpty { defaultIndicators }
             val range = input.s("range")?.let { r -> ChartRange.entries.firstOrNull { it.name == r } } ?: ChartRange.Y1
-            TechnicalAnalyzer.analyze(market.history(sym, range), inds).toPlainText()
+            TechnicalAnalyzer.analyze(market.history(sym, range), inds, params).toPlainText()
         }
         "get_price_summary" -> {
             val sym = input.s("symbol") ?: error("symbol is required")
@@ -116,7 +117,7 @@ class AgentTools(
         "scan_watchlist" -> {
             val inds = input.list("indicators").mapNotNull { IndicatorType.fromName(it) }.toSet().ifEmpty { defaultIndicators }
             val rows = watchlist.current().mapNotNull { w ->
-                runCatching { TechnicalAnalyzer.analyze(market.history(w.symbol, ChartRange.Y1), inds) }.getOrNull()
+                runCatching { TechnicalAnalyzer.analyze(market.history(w.symbol, ChartRange.Y1), inds, params) }.getOrNull()
             }.sortedByDescending { it.compositeScore }
             if (rows.isEmpty()) "No watchlist data available."
             else "Indicators: ${inds.joinToString { it.shortName }}\n" + rows.joinToString("\n") {

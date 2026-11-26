@@ -47,6 +47,8 @@ data class IndicatorResult(
     /** Horizontal guide levels (e.g. 30/70 for RSI, pivot levels). */
     val levels: List<Pair<String, Double>> = emptyList(),
     val available: Boolean = true,
+    /** Display title including the active settings. */
+    val title: String = type.title,
 )
 
 data class KeyLevel(val label: String, val price: Double, val isSupport: Boolean)
@@ -83,7 +85,7 @@ data class AnalysisReport(
         appendLine("Composite verdict: ${verdict.label} (score ${"%+.2f".format(compositeScore)}, confidence $confidence%)")
         appendLine("Bullish $bullishCount · Bearish $bearishCount · Neutral $neutralCount")
         results.filter { it.available }.forEach { r ->
-            appendLine("- ${r.type.title}: ${r.signal.label}. ${r.headline}. " +
+            appendLine("- ${r.title}: ${r.signal.label}. ${r.headline}. " +
                 r.metrics.joinToString(", ") { "${it.label}=${it.value}" })
             appendLine("  ${r.interpretation}")
         }

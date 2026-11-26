@@ -30,6 +30,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CompareArrows
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CandlestickChart
 import androidx.compose.material.icons.filled.ExpandLess
@@ -98,7 +102,7 @@ import com.capitol.app.ui.theme.NumberStyle
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onAskAi: (String) -> Unit) {
+fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onCompare: (String) -> Unit = {}, onAskAi: (String) -> Unit) {
     val st by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(initialSymbol) { if (initialSymbol != null && initialSymbol != st.symbol) vm.open(initialSymbol) }
     var showFilter by rememberSaveable { mutableStateOf(false) }
@@ -112,6 +116,7 @@ fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onAskAi: (Stri
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             st.error?.let { item { ErrorBanner(it) } }
+            st.series?.cachedAt?.let { at -> item { OfflineBanner(at) } }
             if (st.symbol == null) {
                 item { EmptyState(vm::open) }
                 return@LazyColumn
@@ -158,7 +163,7 @@ fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onAskAi: (Stri
                         report?.results?.filter { it.available && it.type.pane == Pane.SEPARATE && it.lines.isNotEmpty() }?.forEach { r ->
                             HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                             Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(r.type.title, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(r.title, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(r.signal.label, style = MaterialTheme.typography.labelMedium, color = signalColor(r.signal))
                             }
                             IndicatorPane(r.lines, levels = r.levels, height = 90.dp)
@@ -183,10 +188,19 @@ fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onAskAi: (Stri
             }
             if (report != null) {
                 item { VerdictCard(report) }
+                if (st.timeframes.isNotEmpty()) item { TimeframeCard(st) }
                 item { SummaryCard(report, onAskAi = {
                     onAskAi("Explain the technical picture for ${report.symbol} using ${st.selected.joinToString { it.shortName }}. What are the key levels and what would change the view?")
                 }) }
                 if (report.keyLevels.isNotEmpty()) item { LevelsCard(report) }
+                item { BacktestCard(st, vm::runBacktest) }
+                st.fundamentals?.let { f -> item { FundamentalsCard(f, st.series?.currency) } }
+                if (st.news.isNotEmpty()) item { NewsCard(st.news) }
+                item {
+                    OutlinedButton({ onCompare(report.symbol) }, Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.CompareArrows, null); Spacer(Modifier.width(6.dp)); Text("Compare with other stocks")
+                    }
+                }
                 item { SectionTitle("Indicator breakdown") }
                 report.results.forEachIndexed { i, r ->
                     item(key = r.type.name) { Staggered(i) { IndicatorCard(r) } }
@@ -405,7 +419,7 @@ private fun IndicatorCard(r: IndicatorResult) {
     CapitolCard(Modifier.fillMaxWidth().animateContentSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(r.type.title, style = MaterialTheme.typography.titleSmall)
+                Text(r.title, style = MaterialTheme.typography.titleSmall)
                 Text(r.type.category.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (r.available) SignalChip(r.signal)
@@ -438,6 +452,138 @@ private fun IndicatorCard(r: IndicatorResult) {
             Spacer(Modifier.height(6.dp))
             Text("How to read it", style = MaterialTheme.typography.labelLarge)
             Text(r.type.howToRead, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun OfflineBanner(at: Long) {
+    val time = remember(at) { java.text.SimpleDateFormat("dd MMM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(at)) }
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(CapitolColors.market.neutral.copy(alpha = 0.15f)).padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Default.CloudOff, null, tint = CapitolColors.market.neutral)
+        Spacer(Modifier.width(8.dp))
+        Text("Couldn't reach the data source — showing saved data from $time. Pull to refresh to try again.",
+            style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun TimeframeCard(st: AnalysisState) {
+    CapitolCard {
+        Text("Timeframe confirmation", style = MaterialTheme.typography.titleMedium)
+        Text("Same indicators on daily and weekly bars", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
+        st.timeframes.forEach { (label, r) ->
+            Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                Text("%+.2f".format(r.compositeScore), style = NumberStyle.copy(fontSize = 12.sp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(8.dp))
+                SignalChip(r.verdict)
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(when (st.timeframesAligned) {
+            true -> "✓ Aligned — daily and weekly agree, which makes the signal more reliable."
+            false -> "⚠ Conflicting — the short-term and long-term pictures disagree. Wait for them to line up, or size positions smaller."
+            null -> "Mixed — at least one timeframe is neutral."
+        }, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun BacktestCard(st: AnalysisState, onRun: (Int) -> Unit) {
+    CapitolCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.History, null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(8.dp))
+            Text("Backtest these indicators", style = MaterialTheme.typography.titleMedium)
+        }
+        Text("How did this indicator set's verdict perform on this stock over the last 2 years?",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Look ahead:", style = MaterialTheme.typography.labelLarge)
+            listOf(5, 10, 20, 60).forEach { h -> FilterChip(st.backtestHorizon == h, { onRun(h) }, { Text("${h}d") }) }
+        }
+        val progress = st.backtestProgress
+        val bt = st.backtest
+        when {
+            progress != null -> { Spacer(Modifier.height(8.dp)); LinearProgressIndicator({ progress }, Modifier.fillMaxWidth()) }
+            bt != null -> {
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(bt.bullish to CapitolColors.market.bull, bt.bearish to CapitolColors.market.bear).forEach { (b, col) ->
+                        Column(Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).background(col.copy(alpha = 0.12f)).padding(10.dp)) {
+                            Text(b.label, style = MaterialTheme.typography.labelMedium, color = col)
+                            Text(if (b.signals == 0) "—" else "%.0f%% right".format(b.hitRatePct), style = MaterialTheme.typography.titleMedium)
+                            Text("${b.signals} signals · avg %+.2f%%".format(b.avgReturnPct), style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(bt.summary, style = MaterialTheme.typography.bodySmall)
+            }
+            else -> { Spacer(Modifier.height(8.dp)); Button({ onRun(st.backtestHorizon) }) { Text("Run backtest") } }
+        }
+    }
+}
+
+@Composable
+private fun FundamentalsCard(f: com.capitol.app.data.market.Fundamentals, currency: String?) {
+    var expanded by remember { mutableStateOf(false) }
+    CapitolCard(Modifier.animateContentSize()) {
+        Text("Fundamentals", style = MaterialTheme.typography.titleMedium)
+        listOfNotNull(f.sector, f.industry).takeIf { it.isNotEmpty() }?.let {
+            Text(it.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.height(8.dp))
+        val items = listOfNotNull(
+            f.marketCap?.let { "Market cap" to "${currency ?: f.currency ?: ""} ${com.capitol.app.data.market.Fundamentals.compact(it)}".trim() },
+            f.trailingPE?.let { "P/E" to "%.1f".format(it) }, f.forwardPE?.let { "Fwd P/E" to "%.1f".format(it) },
+            f.priceToBook?.let { "P/B" to "%.2f".format(it) }, f.dividendYield?.let { "Div yield" to "%.2f%%".format(it * 100) },
+            f.beta?.let { "Beta" to "%.2f".format(it) }, f.fiftyTwoWeekHigh?.let { "52w high" to "%,.2f".format(it) },
+            f.fiftyTwoWeekLow?.let { "52w low" to "%,.2f".format(it) }, f.returnOnEquity?.let { "ROE" to "%.1f%%".format(it * 100) },
+            f.profitMargins?.let { "Margin" to "%.1f%%".format(it * 100) }, f.debtToEquity?.let { "Debt/Eq" to "%.1f".format(it) },
+        )
+        if (items.isEmpty()) Text("No fundamental data for this symbol.", style = MaterialTheme.typography.bodySmall)
+        @OptIn(ExperimentalLayoutApi::class)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            items.forEach { (k, v) ->
+                Column(Modifier.clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 10.dp, vertical = 6.dp)) {
+                    Text(k, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(v, style = NumberStyle.copy(fontSize = 13.sp))
+                }
+            }
+        }
+        f.summary?.takeIf { it.isNotBlank() }?.let { s ->
+            Spacer(Modifier.height(8.dp))
+            Text(if (expanded) s else s.take(180) + if (s.length > 180) "…" else "", style = MaterialTheme.typography.bodySmall)
+            if (s.length > 180) TextButton({ expanded = !expanded }) { Text(if (expanded) "Less" else "More") }
+        }
+    }
+}
+
+@Composable
+private fun NewsCard(news: List<com.capitol.app.data.market.NewsItem>) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val fmt = remember { java.text.SimpleDateFormat("dd MMM, HH:mm", java.util.Locale.getDefault()) }
+    CapitolCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Newspaper, null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(8.dp))
+            Text("Latest news", style = MaterialTheme.typography.titleMedium)
+        }
+        news.take(6).forEach { n ->
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable {
+                runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(n.link))) }
+            }.padding(vertical = 8.dp)) {
+                Text(n.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(listOfNotNull(n.publisher.ifBlank { null }, n.publishedAt.takeIf { it > 0 }?.let { fmt.format(java.util.Date(it * 1000)) }).joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }

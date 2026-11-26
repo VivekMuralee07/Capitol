@@ -60,10 +60,23 @@ class YFinanceBackendDataSource(
         json.decodeFromString<SearchDto>(get(url.toString())).results
     }
 
+    @Serializable
+    private data class NewsDto(val news: List<NewsItem> = emptyList())
+
+    override suspend fun fundamentals(symbol: String): Fundamentals = withContext(Dispatchers.IO) {
+        val url = endpoint("info").addQueryParameter("symbol", symbol.trim().uppercase()).build()
+        json.decodeFromString<Fundamentals>(get(url.toString())).copy(symbol = symbol.trim().uppercase())
+    }
+
+    override suspend fun news(symbol: String): List<NewsItem> = withContext(Dispatchers.IO) {
+        val url = endpoint("news").addQueryParameter("symbol", symbol.trim().uppercase()).build()
+        json.decodeFromString<NewsDto>(get(url.toString())).news
+    }
+
     private fun endpoint(path: String) = "${baseUrl().trimEnd('/')}/$path".toHttpUrl().newBuilder()
 
     private fun get(url: String): String = try {
-        http.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+        http.executeWithRetry(Request.Builder().url(url).build()).use { resp ->
             val body = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) throw MarketDataException("yfinance service HTTP ${resp.code}: $body")
             body

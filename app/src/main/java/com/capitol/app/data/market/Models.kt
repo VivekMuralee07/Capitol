@@ -22,6 +22,8 @@ data class PriceSeries(
     val candles: List<Candle>,
     val regularMarketPrice: Double,
     val previousClose: Double,
+    /** Set when this series was served from the offline cache because a fresh fetch failed. */
+    val cachedAt: Long? = null,
 ) {
     val change: Double get() = regularMarketPrice - previousClose
     val changePercent: Double get() = if (previousClose == 0.0) 0.0 else change / previousClose * 100.0
@@ -84,3 +86,53 @@ fun inferPreviousClose(candles: List<Candle>, intraday: Boolean, fallback: Doubl
 }
 
 val ChartRange.isIntraday: Boolean get() = interval.endsWith("m") || interval.endsWith("h")
+
+@Serializable
+data class Fundamentals(
+    val symbol: String,
+    val name: String? = null,
+    val sector: String? = null,
+    val industry: String? = null,
+    val currency: String? = null,
+    val marketCap: Double? = null,
+    val trailingPE: Double? = null,
+    val forwardPE: Double? = null,
+    val priceToBook: Double? = null,
+    val dividendYield: Double? = null,
+    val beta: Double? = null,
+    val fiftyTwoWeekHigh: Double? = null,
+    val fiftyTwoWeekLow: Double? = null,
+    val averageVolume: Double? = null,
+    val profitMargins: Double? = null,
+    val returnOnEquity: Double? = null,
+    val debtToEquity: Double? = null,
+    val summary: String? = null,
+) {
+    fun toPlainText(): String = buildList {
+        add("$symbol${name?.let { " — $it" } ?: ""}")
+        listOfNotNull(sector, industry).takeIf { it.isNotEmpty() }?.let { add("Sector: ${it.joinToString(" / ")}") }
+        fun n(label: String, v: Double?, f: (Double) -> String) { if (v != null) add("$label: ${f(v)}") }
+        n("Market cap", marketCap) { compact(it) }
+        n("P/E (TTM)", trailingPE) { "%.1f".format(it) }
+        n("Forward P/E", forwardPE) { "%.1f".format(it) }
+        n("Price/Book", priceToBook) { "%.2f".format(it) }
+        n("Dividend yield", dividendYield) { "%.2f%%".format(it * 100) }
+        n("Beta", beta) { "%.2f".format(it) }
+        n("52-week high", fiftyTwoWeekHigh) { "%.2f".format(it) }
+        n("52-week low", fiftyTwoWeekLow) { "%.2f".format(it) }
+        n("Profit margin", profitMargins) { "%.1f%%".format(it * 100) }
+        n("Return on equity", returnOnEquity) { "%.1f%%".format(it * 100) }
+        n("Debt/Equity", debtToEquity) { "%.1f".format(it) }
+    }.joinToString("\n")
+
+    companion object {
+        fun compact(v: Double) = when {
+            v >= 1e12 -> "%.2fT".format(v / 1e12); v >= 1e9 -> "%.2fB".format(v / 1e9)
+            v >= 1e7 -> "%.2fCr".format(v / 1e7).let { if (v < 1e9) "%.1fM".format(v / 1e6) else it }
+            v >= 1e6 -> "%.1fM".format(v / 1e6); else -> "%.0f".format(v)
+        }
+    }
+}
+
+@Serializable
+data class NewsItem(val title: String, val publisher: String, val link: String, val publishedAt: Long)

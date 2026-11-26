@@ -122,7 +122,7 @@ class UpdateManager(private val context: Context, private val http: OkHttpClient
             }
             return
         }
-        val url = s.apkUrl ?: run { _state.value = State.Error("This release has no APK attached."); return }
+        val url = s.apkUrl ?: run { reportError("This release has no APK attached."); return }
         download(url)
     }
 
@@ -148,10 +148,10 @@ class UpdateManager(private val context: Context, private val http: OkHttpClient
                         val got = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
                         when (status) {
                             DownloadManager.STATUS_SUCCESSFUL -> { done = true; downloadedApk = file; _state.value = State.ReadyToInstall }
-                            DownloadManager.STATUS_FAILED -> { done = true; _state.value = State.Error("Download failed") }
+                            DownloadManager.STATUS_FAILED -> { done = true; reportError("Download failed") }
                             else -> if (total > 0) _state.value = State.Downloading(got.toFloat() / total)
                         }
-                    } else { done = true; _state.value = State.Error("Download cancelled") }
+                    } else { done = true; reportError("Download cancelled") }
                 }
                 if (!done) Thread.sleep(400)
             }
@@ -161,7 +161,7 @@ class UpdateManager(private val context: Context, private val http: OkHttpClient
     /** Launches the system package installer for the downloaded APK. */
     fun install(activity: Activity) {
         val apk = downloadedApk ?: apkFile(context).takeIf { it.exists() } ?: run {
-            _state.value = State.Error("The downloaded update is missing. Please download it again."); return
+            reportError("The downloaded update is missing. Please download it again."); return
         }
         try {
             if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
@@ -174,8 +174,13 @@ class UpdateManager(private val context: Context, private val http: OkHttpClient
             activity.startActivity(installIntent(context, apk))
         } catch (e: Exception) {
             // Never crash the app over an update: surface the problem instead.
-            _state.value = State.Error("Couldn't open the installer: ${e.message}")
+            reportError("Couldn't open the installer: ${e.message}")
         }
+    }
+
+    private fun reportError(message: String) {
+        com.capitol.app.diagnostics.Diagnostics.error("Update", message)
+        _state.value = State.Error(message)
     }
 
     fun dismiss() { if (_state.value !is State.Downloading) _state.value = State.Idle }

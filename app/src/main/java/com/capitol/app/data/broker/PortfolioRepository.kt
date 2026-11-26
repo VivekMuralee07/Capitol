@@ -34,6 +34,7 @@ class PortfolioRepository(val kite: KiteConnectClient, val indmoney: IndMoneyCli
         val k = async { if (kite.isConnected) runCatching { kite.holdings() } else Result.success(emptyList()) }
         val i = async { if (indmoney.isConnected) runCatching { indmoney.holdings() } else Result.success(emptyList()) }
         val kr = k.await(); val ir = i.await()
+        listOfNotNull(kr.exceptionOrNull(), ir.exceptionOrNull()).forEach { com.capitol.app.diagnostics.Diagnostics.error("Broker", it.message ?: "error", it) }
         _state.value = PortfolioState(
             holdings = kr.getOrDefault(emptyList()) + ir.getOrDefault(emptyList()) + imported,
             errors = listOfNotNull(kr.exceptionOrNull()?.message, ir.exceptionOrNull()?.message),

@@ -42,7 +42,7 @@ class AutopilotWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(
 
         for (item in c.watchlist.current()) {
             val report = runCatching {
-                TechnicalAnalyzer.analyze(c.market.history(item.symbol, ChartRange.Y1, force = true), settings.defaultIndicators)
+                TechnicalAnalyzer.analyze(c.market.history(item.symbol, ChartRange.Y1, force = true), settings.defaultIndicators, settings.indicatorParams)
             }.getOrNull() ?: continue
             val prev = prefs.getString(item.symbol, null)
             if (prev != null && prev != report.verdict.name) {

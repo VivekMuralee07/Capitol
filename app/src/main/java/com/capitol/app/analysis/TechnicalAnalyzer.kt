@@ -13,11 +13,11 @@ import kotlin.math.min
  */
 object TechnicalAnalyzer {
 
-    fun analyze(series: PriceSeries, selected: Set<IndicatorType>): AnalysisReport {
-        val ctx = Ctx(series)
+    fun analyze(series: PriceSeries, selected: Set<IndicatorType>, params: IndicatorParams = IndicatorParams.DEFAULT): AnalysisReport {
+        val ctx = Ctx(series, params.sanitized())
         val types = if (selected.isEmpty()) IndicatorType.DEFAULTS else selected
         val results = IndicatorType.entries.filter { it in types }.map { t ->
-            runCatching { compute(t, ctx) }.getOrElse { unavailable(t, "Could not compute: ${it.message}") }
+            runCatching { compute(t, ctx) }.getOrElse { unavailable(t, "Could not compute: ${it.message}") }.copy(title = ctx.p.titleFor(t))
         }
         val usable = results.filter { it.available }
         val composite = if (usable.isEmpty()) 0.0 else usable.sumOf { it.score * weight(it.type) } / usable.sumOf { weight(it.type) }
@@ -47,7 +47,7 @@ object TechnicalAnalyzer {
     }
 
     /** Precomputed columns shared by all indicators. */
-    private class Ctx(val series: PriceSeries) {
+    private class Ctx(val series: PriceSeries, val p: IndicatorParams) {
         val candles: List<Candle> = series.candles
         val c = candles.map { it.close }
         val h = candles.map { it.high }
@@ -120,13 +120,14 @@ object TechnicalAnalyzer {
     // ---------------------------------------------------------------- Trend
 
     private fun sma(x: Ctx): IndicatorResult {
-        need(x, 20, IndicatorType.SMA)?.let { return it }
-        val s20 = Indicators.sma(x.c, 20); val s50 = Indicators.sma(x.c, 50); val s200 = Indicators.sma(x.c, 200)
+        val P = x.p
+        need(x, P.smaShort, IndicatorType.SMA)?.let { return it }
+        val s20 = Indicators.sma(x.c, P.smaShort); val s50 = Indicators.sma(x.c, P.smaMid); val s200 = Indicators.sma(x.c, P.smaLong)
         val p = x.last
         val a20 = s20.last(); val a50 = s50.last(); val a200 = s200.last()
         var score = 0.0
         val parts = mutableListOf<String>()
-        listOf(Triple("20", a20, 0.5), Triple("50", a50, 0.6), Triple("200", a200, 0.7)).forEach { (name, avg, w) ->
+        listOf(Triple("${P.smaShort}", a20, 0.5), Triple("${P.smaMid}", a50, 0.6), Triple("${P.smaLong}", a200, 0.7)).forEach { (name, avg, w) ->
             if (avg != null) {
                 val d = (p - avg) / avg * 100
                 score += if (p > avg) w else -w
@@ -139,10 +140,10 @@ object TechnicalAnalyzer {
             val since = barsSinceCross(s50, s200, 40)
             cross = if (a50 > a200) {
                 score += 0.2
-                if (since != null) " A Golden Cross (50 above 200) happened $since bars ago — a classic long-term bullish signal." else " The 50-SMA is above the 200-SMA, a long-term bullish structure."
+                if (since != null) " A Golden Cross (${P.smaMid} above ${P.smaLong}) happened $since bars ago — a classic long-term bullish signal." else " The 50-SMA is above the 200-SMA, a long-term bullish structure."
             } else {
                 score -= 0.2
-                if (since != null) " A Death Cross (50 below 200) happened $since bars ago — a classic long-term bearish signal." else " The 50-SMA is below the 200-SMA, a long-term bearish structure."
+                if (since != null) " A Death Cross (${P.smaMid} below ${P.smaLong}) happened $since bars ago — a classic long-term bearish signal." else " The 50-SMA is below the 200-SMA, a long-term bearish structure."
             }
         }
         val headline = when {
@@ -152,23 +153,24 @@ object TechnicalAnalyzer {
             score <= -0.3 -> "Mostly below averages — downtrend"
             else -> "Mixed — price is chopping around its averages"
         }
-        val slopeTxt = slope50?.let { " The 50-SMA is ${if (it > 0.02) "rising" else if (it < -0.02) "falling" else "flat"} (${"%.2f".format(it)}%/bar)." } ?: ""
+        val slopeTxt = slope50?.let { " The ${P.smaMid}-SMA is ${if (it > 0.02) "rising" else if (it < -0.02) "falling" else "flat"} (${"%.2f".format(it)}%/bar)." } ?: ""
         return IndicatorResult(
             IndicatorType.SMA, Signal.fromScore(score), clamp(score), headline,
-            listOf(Metric("SMA20", f(a20)), Metric("SMA50", f(a50)), Metric("SMA200", f(a200))),
+            listOf(Metric("SMA${P.smaShort}", f(a20)), Metric("SMA${P.smaMid}", f(a50)), Metric("SMA${P.smaLong}", f(a200))),
             "Right now ${parts.joinToString("; ")}.$cross$slopeTxt" +
-                (if (a200 == null) " (Load at least 1Y of daily data to see the 200-SMA.)" else ""),
+                (if (a200 == null) " (Load more history to see the ${P.smaLong}-SMA.)" else ""),
             lines = listOf(
-                ChartLine("SMA20", s20, LineRole.SECONDARY),
-                ChartLine("SMA50", s50, LineRole.TERTIARY),
-                ChartLine("SMA200", s200, LineRole.ACCENT),
+                ChartLine("SMA${P.smaShort}", s20, LineRole.SECONDARY),
+                ChartLine("SMA${P.smaMid}", s50, LineRole.TERTIARY),
+                ChartLine("SMA${P.smaLong}", s200, LineRole.ACCENT),
             ),
         )
     }
 
     private fun ema(x: Ctx): IndicatorResult {
-        need(x, 26, IndicatorType.EMA)?.let { return it }
-        val e12 = Indicators.ema(x.c, 12); val e26 = Indicators.ema(x.c, 26)
+        val P = x.p
+        need(x, P.emaSlow, IndicatorType.EMA)?.let { return it }
+        val e12 = Indicators.ema(x.c, P.emaFast); val e26 = Indicators.ema(x.c, P.emaSlow)
         val a = e12.last()!!; val b = e26.last()!!; val p = x.last
         val gap = (a - b) / b * 100
         val since = barsSinceCross(e12, e26, 30)
@@ -178,15 +180,15 @@ object TechnicalAnalyzer {
         return IndicatorResult(
             IndicatorType.EMA, Signal.fromScore(score), clamp(score),
             if (a > b) "Fast EMA above slow EMA — bullish momentum" else "Fast EMA below slow EMA — bearish momentum",
-            listOf(Metric("EMA12", f(a)), Metric("EMA26", f(b)), Metric("Spread", pct(gap))),
-            "The 12-EMA (${f(a)}) is ${"%.2f".format(abs(gap))}% ${if (a > b) "above" else "below"} the 26-EMA (${f(b)}), and price is ${if (p > a) "above" else "below"} the fast EMA.$crossTxt",
-            lines = listOf(ChartLine("EMA12", e12, LineRole.BULL), ChartLine("EMA26", e26, LineRole.BEAR)),
+            listOf(Metric("EMA${P.emaFast}", f(a)), Metric("EMA${P.emaSlow}", f(b)), Metric("Spread", pct(gap))),
+            "The ${P.emaFast}-EMA (${f(a)}) is ${"%.2f".format(abs(gap))}% ${if (a > b) "above" else "below"} the ${P.emaSlow}-EMA (${f(b)}), and price is ${if (p > a) "above" else "below"} the fast EMA.$crossTxt",
+            lines = listOf(ChartLine("EMA${P.emaFast}", e12, LineRole.BULL), ChartLine("EMA${P.emaSlow}", e26, LineRole.BEAR)),
         )
     }
 
     private fun adx(x: Ctx): IndicatorResult {
-        need(x, 30, IndicatorType.ADX)?.let { return it }
-        val r = Indicators.adx(x.h, x.l, x.c)
+        need(x, x.p.adxPeriod * 2 + 2, IndicatorType.ADX)?.let { return it }
+        val r = Indicators.adx(x.h, x.l, x.c, x.p.adxPeriod)
         val adx = r.adx.last() ?: return unavailable(IndicatorType.ADX, "Not enough data for ADX.")
         val p = r.plusDi.last()!!; val m = r.minusDi.last()!!
         val strength = when { adx >= 40 -> "very strong"; adx >= 25 -> "strong"; adx >= 20 -> "emerging"; else -> "weak / no" }
@@ -258,8 +260,8 @@ object TechnicalAnalyzer {
     }
 
     private fun supertrend(x: Ctx): IndicatorResult {
-        need(x, 15, IndicatorType.SUPERTREND)?.let { return it }
-        val r = Indicators.supertrend(x.h, x.l, x.c)
+        need(x, x.p.supertrendPeriod + 5, IndicatorType.SUPERTREND)?.let { return it }
+        val r = Indicators.supertrend(x.h, x.l, x.c, x.p.supertrendPeriod, x.p.supertrendMultiplier)
         val line = r.line.last()!!; val up = r.uptrend.last()!!
         var age = 0
         for (i in x.n - 1 downTo 1) { if (r.uptrend[i] != r.uptrend[i - 1] || r.uptrend[i - 1] == null) break; age++ }
@@ -279,8 +281,8 @@ object TechnicalAnalyzer {
     // ------------------------------------------------------------- Momentum
 
     private fun macd(x: Ctx): IndicatorResult {
-        need(x, 35, IndicatorType.MACD)?.let { return it }
-        val r = Indicators.macd(x.c)
+        need(x, x.p.macdSlow + x.p.macdSignal, IndicatorType.MACD)?.let { return it }
+        val r = Indicators.macd(x.c, x.p.macdFast, x.p.macdSlow, x.p.macdSignal)
         val m = r.macd.last()!!; val s = r.signal.last()!!; val h = r.hist.last()!!
         val hPrev = r.hist[x.n - 2] ?: h
         val since = barsSinceCross(r.macd, r.signal, 30)
@@ -304,30 +306,31 @@ object TechnicalAnalyzer {
     }
 
     private fun rsi(x: Ctx): IndicatorResult {
-        need(x, 20, IndicatorType.RSI)?.let { return it }
-        val r = Indicators.rsi(x.c)
+        need(x, x.p.rsiPeriod + 6, IndicatorType.RSI)?.let { return it }
+        val r = Indicators.rsi(x.c, x.p.rsiPeriod)
+        val ob = x.p.rsiOverbought.toDouble(); val os = x.p.rsiOversold.toDouble()
         val v = r.last()!!
         val prev = r[x.n - 6] ?: v
         val score = when {
-            v >= 80 -> -1.4; v >= 70 -> -0.9
-            v <= 20 -> 1.4; v <= 30 -> 0.9
+            v >= ob + 10 -> -1.4; v >= ob -> -0.9
+            v <= os - 10 -> 1.4; v <= os -> 0.9
             v >= 55 -> 0.6; v <= 45 -> -0.6
             else -> 0.0
-        } + if (v in 30.0..70.0) (if (v > prev) 0.2 else -0.2) else 0.0
+        } + if (v in os..ob) (if (v > prev) 0.2 else -0.2) else 0.0
         val div = divergence(x.c, r)
-        val zone = when { v >= 70 -> "overbought"; v <= 30 -> "oversold"; v >= 50 -> "bullish zone"; else -> "bearish zone" }
+        val zone = when { v >= ob -> "overbought"; v <= os -> "oversold"; v >= 50 -> "bullish zone"; else -> "bearish zone" }
         return IndicatorResult(
             IndicatorType.RSI, Signal.fromScore(score + div.first), clamp(score + div.first),
             "RSI ${"%.1f".format(v)} — $zone",
             listOf(Metric("RSI", "%.1f".format(v)), Metric("5 bars ago", "%.1f".format(prev)), Metric("Zone", zone)),
             "RSI is ${"%.1f".format(v)} (${if (v > prev) "up" else "down"} from ${"%.1f".format(prev)} five bars ago). " + when {
-                v >= 70 -> "That is overbought: buyers have pushed hard and a pause or pullback is common, although strong trends can stay overbought for weeks."
-                v <= 30 -> "That is oversold: selling may be exhausted and a relief bounce is common, but wait for RSI to turn back above 30 for confirmation."
+                v >= ob -> "That is overbought: buyers have pushed hard and a pause or pullback is common, although strong trends can stay overbought for weeks."
+                v <= os -> "That is oversold: selling may be exhausted and a relief bounce is common, but wait for RSI to turn back above ${x.p.rsiOversold} for confirmation."
                 v >= 50 -> "Holding above 50 means gains are outweighing losses — momentum favours the bulls with room before overbought."
                 else -> "Below 50 means losses are outweighing gains — momentum favours the bears, though not yet oversold."
             } + div.second,
             lines = listOf(ChartLine("RSI", r, LineRole.PRIMARY)),
-            levels = listOf("70" to 70.0, "50" to 50.0, "30" to 30.0),
+            levels = listOf("${x.p.rsiOverbought}" to ob, "50" to 50.0, "${x.p.rsiOversold}" to os),
         )
     }
 
@@ -349,8 +352,8 @@ object TechnicalAnalyzer {
     }
 
     private fun stoch(x: Ctx): IndicatorResult {
-        need(x, 20, IndicatorType.STOCHASTIC)?.let { return it }
-        val r = Indicators.stochastic(x.h, x.l, x.c)
+        need(x, x.p.stochPeriod + 6, IndicatorType.STOCHASTIC)?.let { return it }
+        val r = Indicators.stochastic(x.h, x.l, x.c, x.p.stochPeriod)
         val k = r.k.last()!!; val d = r.d.last() ?: k
         val since = barsSinceCross(r.k, r.d, 10)
         var score = when { k >= 80 -> -0.9; k <= 20 -> 0.9; k > 50 -> 0.3; else -> -0.3 }
@@ -362,7 +365,7 @@ object TechnicalAnalyzer {
             IndicatorType.STOCHASTIC, Signal.fromScore(score), clamp(score),
             "%K ${"%.0f".format(k)} / %D ${"%.0f".format(d)}" + when { k >= 80 -> " — overbought"; k <= 20 -> " — oversold"; else -> "" },
             listOf(Metric("%K", "%.1f".format(k)), Metric("%D", "%.1f".format(d))),
-            "The close sits at the ${"%.0f".format(k)}th percentile of the 14-bar range. %K is ${if (k > d) "above" else "below"} %D" +
+            "The close sits at the ${"%.0f".format(k)}th percentile of the ${x.p.stochPeriod}-bar range. %K is ${if (k > d) "above" else "below"} %D" +
                 (since?.let { ", after crossing $it bars ago" } ?: "") + ". " + when {
                 k >= 80 && k < d -> "A bearish cross inside the overbought zone is a classic sell trigger."
                 k <= 20 && k > d -> "A bullish cross inside the oversold zone is a classic buy trigger."
@@ -376,8 +379,8 @@ object TechnicalAnalyzer {
     }
 
     private fun cci(x: Ctx): IndicatorResult {
-        need(x, 25, IndicatorType.CCI)?.let { return it }
-        val r = Indicators.cci(x.h, x.l, x.c)
+        need(x, x.p.cciPeriod + 5, IndicatorType.CCI)?.let { return it }
+        val r = Indicators.cci(x.h, x.l, x.c, x.p.cciPeriod)
         val v = r.last()!!; val prev = r[x.n - 2] ?: v
         val score = when { v > 200 -> -0.6; v > 100 -> 0.9; v > 0 -> 0.4; v < -200 -> 0.6; v < -100 -> -0.9; else -> -0.4 }
         return IndicatorResult(
@@ -398,15 +401,15 @@ object TechnicalAnalyzer {
     }
 
     private fun williams(x: Ctx): IndicatorResult {
-        need(x, 15, IndicatorType.WILLIAMS_R)?.let { return it }
-        val r = Indicators.williamsR(x.h, x.l, x.c)
+        need(x, x.p.williamsPeriod + 1, IndicatorType.WILLIAMS_R)?.let { return it }
+        val r = Indicators.williamsR(x.h, x.l, x.c, x.p.williamsPeriod)
         val v = r.last()!!
         val score = when { v > -10 -> -1.0; v > -20 -> -0.7; v < -90 -> 1.0; v < -80 -> 0.7; v > -50 -> 0.3; else -> -0.3 }
         return IndicatorResult(
             IndicatorType.WILLIAMS_R, Signal.fromScore(score), clamp(score),
             "%R ${"%.0f".format(v)}" + when { v > -20 -> " — overbought"; v < -80 -> " — oversold"; else -> "" },
             listOf(Metric("%R", "%.1f".format(v))),
-            "Williams %R is ${"%.1f".format(v)}: the close is ${"%.0f".format(-v)}% below the 14-bar high. " + when {
+            "Williams %R is ${"%.1f".format(v)}: the close is ${"%.0f".format(-v)}% below the ${x.p.williamsPeriod}-bar high. " + when {
                 v > -20 -> "Overbought — the stock is closing near its highs; good for trend followers, risky for new buyers."
                 v < -80 -> "Oversold — the stock is closing near its lows; a move back above −80 would be a buy trigger."
                 else -> "Mid-range — no extreme reading."
@@ -417,15 +420,15 @@ object TechnicalAnalyzer {
     }
 
     private fun roc(x: Ctx): IndicatorResult {
-        need(x, 15, IndicatorType.ROC)?.let { return it }
-        val r = Indicators.roc(x.c)
+        need(x, x.p.rocPeriod + 3, IndicatorType.ROC)?.let { return it }
+        val r = Indicators.roc(x.c, x.p.rocPeriod)
         val v = r.last()!!; val prev = r[x.n - 4] ?: v
         val score = (when { v > 8 -> 1.2; v > 2 -> 0.8; v > 0 -> 0.3; v < -8 -> -1.2; v < -2 -> -0.8; else -> -0.3 }) + if (v > prev) 0.2 else -0.2
         return IndicatorResult(
             IndicatorType.ROC, Signal.fromScore(score), clamp(score),
-            "Price ${pct(v)} over 12 bars",
+            "Price ${pct(v)} over ${x.p.rocPeriod} bars",
             listOf(Metric("ROC", pct(v)), Metric("3 bars ago", pct(prev))),
-            "Price has moved ${pct(v)} over the last 12 bars, and the rate of change is ${if (v > prev) "accelerating" else "decelerating"} (was ${pct(prev)}). " +
+            "Price has moved ${pct(v)} over the last ${x.p.rocPeriod} bars, and the rate of change is ${if (v > prev) "accelerating" else "decelerating"} (was ${pct(prev)}). " +
                 if (abs(v) > 15) "Such a large move can indicate exhaustion — expect consolidation." else "",
             lines = listOf(ChartLine("ROC", r, LineRole.PRIMARY)),
             levels = listOf("0" to 0.0),
@@ -435,8 +438,8 @@ object TechnicalAnalyzer {
     // ----------------------------------------------------------- Volatility
 
     private fun bollinger(x: Ctx): IndicatorResult {
-        need(x, 20, IndicatorType.BOLLINGER)?.let { return it }
-        val b = Indicators.bollinger(x.c)
+        need(x, x.p.bbPeriod, IndicatorType.BOLLINGER)?.let { return it }
+        val b = Indicators.bollinger(x.c, x.p.bbPeriod, x.p.bbStdDev)
         val u = b.upper.last()!!; val m = b.middle.last()!!; val lo = b.lower.last()!!
         val p = x.last
         val pctB = if (u == lo) 0.5 else (p - lo) / (u - lo)
@@ -471,8 +474,8 @@ object TechnicalAnalyzer {
     }
 
     private fun atr(x: Ctx): IndicatorResult {
-        need(x, 20, IndicatorType.ATR)?.let { return it }
-        val r = Indicators.atr(x.h, x.l, x.c)
+        need(x, x.p.atrPeriod + 6, IndicatorType.ATR)?.let { return it }
+        val r = Indicators.atr(x.h, x.l, x.c, x.p.atrPeriod)
         val a = r.last()!!; val p = x.last
         val atrPct = a / p * 100
         val avg = r.takeLast(50).filterNotNull().average()
@@ -541,9 +544,9 @@ object TechnicalAnalyzer {
     }
 
     private fun mfi(x: Ctx): IndicatorResult {
-        need(x, 20, IndicatorType.MFI)?.let { return it }
+        need(x, x.p.mfiPeriod + 6, IndicatorType.MFI)?.let { return it }
         if (x.v.takeLast(20).all { it == 0.0 }) return unavailable(IndicatorType.MFI, "No volume data for this symbol.")
-        val r = Indicators.mfi(x.h, x.l, x.c, x.v)
+        val r = Indicators.mfi(x.h, x.l, x.c, x.v, x.p.mfiPeriod)
         val v = r.last()!!
         val div = divergence(x.c, r)
         val score = when { v >= 80 -> -1.0; v <= 20 -> 1.0; v > 55 -> 0.5; v < 45 -> -0.5; else -> 0.0 } + div.first
@@ -694,8 +697,8 @@ object TechnicalAnalyzer {
         val look = min(x.n, 60)
         cands += "${look}-bar high" to x.h.takeLast(look).max()
         cands += "${look}-bar low" to x.l.takeLast(look).min()
-        Indicators.sma(x.c, 50).last()?.let { cands += "SMA50" to it }
-        Indicators.sma(x.c, 200).last()?.let { cands += "SMA200" to it }
+        Indicators.sma(x.c, x.p.smaMid).last()?.let { cands += "SMA${x.p.smaMid}" to it }
+        Indicators.sma(x.c, x.p.smaLong).last()?.let { cands += "SMA${x.p.smaLong}" to it }
         val prev = x.candles[x.n - 2]
         val pv = Indicators.pivots(prev.high, prev.low, prev.close)
         cands += listOf("Pivot" to pv.p, "R1" to pv.r1, "S1" to pv.s1)
