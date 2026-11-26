@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Refresh
@@ -143,7 +144,7 @@ class WatchlistViewModel(private val c: AppContainer) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WatchlistScreen(vm: WatchlistViewModel, onOpen: (String) -> Unit) {
+fun WatchlistScreen(vm: WatchlistViewModel, onOpen: (String) -> Unit, onCalendar: () -> Unit = {}) {
     val st by vm.state.collectAsStateWithLifecycle()
     var adding by remember { mutableStateOf(false) }
     var alertFor by remember { mutableStateOf<WatchItem?>(null) }
@@ -159,6 +160,7 @@ fun WatchlistScreen(vm: WatchlistViewModel, onOpen: (String) -> Unit) {
                 Text("${st.rows.size} symbols · swipe left to remove", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             TextButton(vm::toggleSort) { Text(if (st.sortBySignal) "Sorted: signal" else "Sort by signal") }
+            IconButton(onCalendar) { Icon(Icons.Default.Event, "Earnings & dividends calendar") }
             IconButton({ vm.refresh() }) { Icon(Icons.Default.Refresh, "Refresh") }
             IconButton({ adding = true }) { Icon(Icons.Default.Add, "Add") }
         }

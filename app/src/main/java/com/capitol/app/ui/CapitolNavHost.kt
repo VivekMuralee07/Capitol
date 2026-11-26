@@ -84,7 +84,7 @@ fun CapitolNavHost(c: AppContainer, isDark: Boolean, nav: NavHostController = re
 
     Scaffold(
         bottomBar = {
-            if (current != "settings" && current != "compare") NavigationBar {
+            if (current !in setOf("settings", "compare", "calendar", "screener")) NavigationBar {
                 TABS.forEach { t ->
                     NavigationBarItem(
                         selected = current == t.route,
@@ -115,7 +115,7 @@ fun CapitolNavHost(c: AppContainer, isDark: Boolean, nav: NavHostController = re
                 }
                 composable("watchlist") {
                     val vm: WatchlistViewModel = viewModel { WatchlistViewModel(c) }
-                    WatchlistScreen(vm, onOpen = openSymbol)
+                    WatchlistScreen(vm, onOpen = openSymbol, onCalendar = { nav.navigate("calendar") })
                 }
                 composable("agent?prompt={prompt}", arguments = listOf(navArgument("prompt") { type = NavType.StringType; nullable = true; defaultValue = null })) { e ->
                     val vm: AgentViewModel = viewModel { AgentViewModel(c) }
@@ -129,6 +129,10 @@ fun CapitolNavHost(c: AppContainer, isDark: Boolean, nav: NavHostController = re
                     val vm: com.capitol.app.ui.compare.CompareViewModel = viewModel { com.capitol.app.ui.compare.CompareViewModel(c) }
                     com.capitol.app.ui.compare.CompareScreen(vm, e.arguments?.getString("symbols")?.split(',')?.filter { it.isNotBlank() }.orEmpty(),
                         onBack = { nav.popBackStack() }, onOpen = openSymbol)
+                }
+                composable("calendar") {
+                    val vm: com.capitol.app.ui.calendar.CalendarViewModel = viewModel { com.capitol.app.ui.calendar.CalendarViewModel(c) }
+                    com.capitol.app.ui.calendar.CalendarScreen(vm, onBack = { nav.popBackStack() }, onOpen = openSymbol)
                 }
                 composable("settings") {
                     SettingsScreen(c, onBack = { nav.popBackStack() }, onStartUpdate = {

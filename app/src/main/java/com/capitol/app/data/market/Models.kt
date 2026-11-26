@@ -107,6 +107,10 @@ data class Fundamentals(
     val returnOnEquity: Double? = null,
     val debtToEquity: Double? = null,
     val summary: String? = null,
+    /** Epoch seconds of the next earnings date / ex-dividend / dividend payment, when known. */
+    val nextEarningsDate: Long? = null,
+    val exDividendDate: Long? = null,
+    val dividendDate: Long? = null,
 ) {
     fun toPlainText(): String = buildList {
         add("$symbol${name?.let { " — $it" } ?: ""}")
@@ -123,6 +127,9 @@ data class Fundamentals(
         n("Profit margin", profitMargins) { "%.1f%%".format(it * 100) }
         n("Return on equity", returnOnEquity) { "%.1f%%".format(it * 100) }
         n("Debt/Equity", debtToEquity) { "%.1f".format(it) }
+        val df = java.text.SimpleDateFormat("dd MMM yyyy", java.util.Locale.US)
+        nextEarningsDate?.let { add("Next earnings: ${df.format(java.util.Date(it * 1000))}") }
+        exDividendDate?.let { add("Ex-dividend date: ${df.format(java.util.Date(it * 1000))}") }
     }.joinToString("\n")
 
     companion object {

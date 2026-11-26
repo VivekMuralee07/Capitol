@@ -68,6 +68,18 @@ class AutopilotWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(
             prefs.edit().apply { states.forEach { (k, v) -> putBoolean(key(k), v.first) } }.apply()
         }
 
+        // Earnings / ex-dividend reminders: once per event, the day before (or on the day).
+        val nowS = System.currentTimeMillis() / 1000
+        com.capitol.app.data.market.EventsCalendar.load(c.market, c.watchlist.all().map { it.symbol to it.name }, nowS)
+            .filter { it.type != com.capitol.app.data.market.EventType.DIVIDEND && it.daysFrom(nowS) in 0L..1L }
+            .forEach { e ->
+                val k = "event|${e.symbol}|${e.type}|${e.epochSeconds}"
+                if (!prefs.getBoolean(k, false)) {
+                    changes += "${e.symbol}: ${e.type.label} ${if (e.daysFrom(nowS) == 0L) "today" else "tomorrow"} — expect higher volatility"
+                    prefs.edit().putBoolean(k, true).apply()
+                }
+            }
+
         com.capitol.app.widget.WatchlistWidget.refresh(applicationContext)
         if (changes.isNotEmpty()) {
             val body = c.agent.digest("Watchlist changes since last scan:\n" + changes.joinToString("\n"))

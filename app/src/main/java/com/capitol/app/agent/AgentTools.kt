@@ -51,6 +51,7 @@ class AgentTools(
             mapOf("symbol" to mapOf("type" to "string")), listOf("symbol")),
         Spec("get_news", "Get recent news headlines (title, publisher, time) for a symbol.",
             mapOf("symbol" to mapOf("type" to "string")), listOf("symbol")),
+        Spec("get_calendar", "Upcoming earnings and dividend dates (next 90 days) for every symbol in the user's watchlists.", emptyMap(), emptyList()),
         Spec("get_watchlist", "List all of the user's Capitol watchlists and their symbols, with price and indicator alerts.", emptyMap(), emptyList()),
         Spec("scan_watchlist",
             "Run technical analysis on every symbol across all watchlists and return a compact ranked table (verdict, score, price, change). Use for 'what looks best/worst on my watchlist'.",
@@ -121,6 +122,13 @@ class AgentTools(
             market.news(sym).take(8).joinToString("\n") { n ->
                 "- ${n.title} (${n.publisher}${if (n.publishedAt > 0) ", " + fmt.format(java.util.Date(n.publishedAt * 1000)) else ""})"
             }.ifBlank { "No recent news found for $sym." }
+        }
+        "get_calendar" -> {
+            val now = System.currentTimeMillis() / 1000
+            val df = java.text.SimpleDateFormat("EEE dd MMM yyyy", java.util.Locale.US)
+            com.capitol.app.data.market.EventsCalendar.load(market, watchlist.all().map { it.symbol to it.name }, now)
+                .joinToString("\n") { "${df.format(java.util.Date(it.epochSeconds * 1000))}: ${it.symbol} ${it.type.label} (in ${it.daysFrom(now)} days)" }
+                .ifBlank { "No upcoming earnings or dividend dates found for the watchlist." }
         }
         "get_watchlist" -> {
             val d = watchlist.snapshot()

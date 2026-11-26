@@ -2,7 +2,6 @@ package com.capitol.app
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -20,7 +19,8 @@ import com.capitol.app.ui.theme.CapitolTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+class MainActivity : androidx.fragment.app.FragmentActivity() {
+    private var coldStart = true
     private val container get() = (application as CapitolApp).container
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,11 +42,24 @@ class MainActivity : ComponentActivity() {
             }
             CapitolTheme(darkTheme = dark, dynamicColor = settings.dynamicColor) {
                 CapitolNavHost(container, dark)
+                if (com.capitol.app.ui.lock.AppLock.locked) com.capitol.app.ui.lock.LockScreen(this@MainActivity)
             }
         }
         lifecycleScope.launch {
             if (container.settings.settings.first().autoCheckUpdates) container.updates.check(silent = true)
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val enabled = kotlinx.coroutines.runBlocking { container.settings.settings.first().appLock }
+        com.capitol.app.ui.lock.AppLock.onForeground(enabled, coldStart)
+        coldStart = false
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (!isChangingConfigurations) com.capitol.app.ui.lock.AppLock.onBackground()
     }
 
     override fun onNewIntent(intent: Intent) {

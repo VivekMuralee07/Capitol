@@ -549,6 +549,8 @@ private fun FundamentalsCard(f: com.capitol.app.data.market.Fundamentals, curren
             f.beta?.let { "Beta" to "%.2f".format(it) }, f.fiftyTwoWeekHigh?.let { "52w high" to "%,.2f".format(it) },
             f.fiftyTwoWeekLow?.let { "52w low" to "%,.2f".format(it) }, f.returnOnEquity?.let { "ROE" to "%.1f%%".format(it * 100) },
             f.profitMargins?.let { "Margin" to "%.1f%%".format(it * 100) }, f.debtToEquity?.let { "Debt/Eq" to "%.1f".format(it) },
+            f.nextEarningsDate?.let { "Next earnings" to java.text.SimpleDateFormat("dd MMM", java.util.Locale.getDefault()).format(java.util.Date(it * 1000)) },
+            f.exDividendDate?.takeIf { it * 1000 > System.currentTimeMillis() - 86_400_000 }?.let { "Ex-dividend" to java.text.SimpleDateFormat("dd MMM", java.util.Locale.getDefault()).format(java.util.Date(it * 1000)) },
         )
         if (items.isEmpty()) Text("No fundamental data for this symbol.", style = MaterialTheme.typography.bodySmall)
         @OptIn(ExperimentalLayoutApi::class)

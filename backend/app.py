@@ -134,6 +134,38 @@ def info(symbol: str = Query(..., min_length=1, max_length=32)) -> dict[str, Any
         "returnOnEquity": _num(d.get("returnOnEquity")),
         "debtToEquity": _num(d.get("debtToEquity")),
         "summary": d.get("longBusinessSummary"),
+        **_calendar(sym),
+    }
+
+
+def _ts(v: Any) -> int | None:
+    """date/datetime/epoch → epoch seconds."""
+    from datetime import date, datetime, timezone
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return int(v)
+    if isinstance(v, datetime):
+        return int(v.timestamp())
+    if isinstance(v, date):
+        return int(datetime(v.year, v.month, v.day, tzinfo=timezone.utc).timestamp())
+    return None
+
+
+def _calendar(sym: str) -> dict[str, Any]:
+    """Next earnings / dividend dates from yfinance's Ticker.calendar."""
+    try:
+        cal = yf.Ticker(sym).calendar or {}
+    except Exception:
+        return {}
+    earnings = cal.get("Earnings Date") or []
+    if not isinstance(earnings, list):
+        earnings = [earnings]
+    stamps = [t for t in (_ts(e) for e in earnings) if t]
+    return {
+        "nextEarningsDate": min(stamps) if stamps else None,
+        "exDividendDate": _ts(cal.get("Ex-Dividend Date")),
+        "dividendDate": _ts(cal.get("Dividend Date")),
     }
 
 

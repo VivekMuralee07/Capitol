@@ -83,7 +83,7 @@ class YahooFinanceDataSource(
         fun fetch(): JsonObject? {
             val c = crumb ?: obtainCrumb() ?: return null
             val url = "$base/v10/finance/quoteSummary/$sym".toHttpUrl().newBuilder()
-                .addQueryParameter("modules", "price,summaryDetail,defaultKeyStatistics,assetProfile,financialData")
+                .addQueryParameter("modules", "price,summaryDetail,defaultKeyStatistics,assetProfile,financialData,calendarEvents")
                 .addQueryParameter("crumb", c).build()
             val req = Request.Builder().url(url).header("User-Agent", USER_AGENT).header("Accept", "application/json").build()
             http.executeWithRetry(req).use { resp ->
@@ -129,7 +129,11 @@ class YahooFinanceDataSource(
             else -> null
         }
         val price = mod("price"); val sd = mod("summaryDetail"); val ks = mod("defaultKeyStatistics")
-        val ap = mod("assetProfile"); val fd = mod("financialData")
+        val ap = mod("assetProfile"); val fd = mod("financialData"); val cal = mod("calendarEvents")
+        val now = System.currentTimeMillis() / 1000
+        val earnings = ((cal?.get("earnings") as? JsonObject)?.get("earningsDate") as? JsonArray)
+            ?.mapNotNull { ((it as? JsonObject)?.get("raw") as? JsonPrimitive)?.longOrNull }
+            ?.filter { it >= now - 86_400 }?.minOrNull()
         return Fundamentals(
             symbol = sym,
             name = price?.str("longName") ?: price?.str("shortName"),
@@ -144,6 +148,9 @@ class YahooFinanceDataSource(
             profitMargins = raw(fd, "profitMargins") ?: raw(ks, "profitMargins"),
             returnOnEquity = raw(fd, "returnOnEquity"), debtToEquity = raw(fd, "debtToEquity"),
             summary = ap?.str("longBusinessSummary"),
+            nextEarningsDate = earnings,
+            exDividendDate = raw(cal, "exDividendDate")?.toLong() ?: raw(sd, "exDividendDate")?.toLong(),
+            dividendDate = raw(cal, "dividendDate")?.toLong(),
         )
     }
 
