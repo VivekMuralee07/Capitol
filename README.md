@@ -39,6 +39,13 @@ Capitol is a native **Kotlin / Jetpack Compose** Android app. It pulls market da
 - **Home-screen widget** with your active watchlist's prices and verdicts.
 - **Agent upgrades**: streaming replies, saved chats, estimated cost per answer, prompt caching, and automatic condensing of long chats.
 - **Reliability**: automatic retry with back-off, an offline copy of the last good data, pull-to-refresh, auto-refresh during market hours, and *Settings → Diagnostics* to copy an error log for bug reports.
+- **Screener**: scan NIFTY 50, Bank NIFTY, US large caps or your watchlists for setups such as a fresh Supertrend buy, an oversold bounce, momentum leaders or a Bollinger squeeze. Combine conditions, and optionally show only setups that triggered in the last 5 days.
+- **Trade planner**: entry zone, stop-loss (ATR-based or just beyond the nearest support or resistance), targets at the next levels with reward/risk multiples, and position size from your capital and risk %.
+- **Portfolio analytics**: allocation donut, sector mix, concentration and diversification score, value-weighted technical health, a 1-year value chart and risk warnings.
+- **Earnings and dividend calendar** for all your watchlists, with an Autopilot reminder the day before results.
+- **Share or export** an analysis as an image, PDF or text.
+- **App lock** with fingerprint, face or screen lock (*Settings → Security*).
+![](app/screenshots/report_example.png)
 - **Dark and light mode**: System / Light / Dark setting, a quick toggle on the home page, and optional Material You colours on Android 12+.
 
 ## Project layout

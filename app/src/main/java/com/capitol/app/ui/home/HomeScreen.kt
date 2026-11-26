@@ -40,6 +40,7 @@ import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -99,10 +100,11 @@ fun HomeScreen(
     onOpenAgent: () -> Unit,
     onOpenPortfolio: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenScreener: () -> Unit = {},
 ) {
     val st by vm.state.collectAsStateWithLifecycle()
     com.capitol.app.ui.components.AutoRefreshDuringMarketHours { vm.refresh(force = true) }
-    HomeContent(st, isDark, onToggleTheme, { vm.refresh(force = true) }, vm::selectHero, onOpenSymbol, onOpenAgent, onOpenPortfolio, onOpenSettings)
+    HomeContent(st, isDark, onToggleTheme, { vm.refresh(force = true) }, vm::selectHero, onOpenSymbol, onOpenAgent, onOpenPortfolio, onOpenSettings, onOpenScreener)
 }
 
 /** Stateless home page, rendered from [HomeState] (also used by screenshot tests). */
@@ -117,6 +119,7 @@ fun HomeContent(
     onOpenAgent: () -> Unit,
     onOpenPortfolio: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenScreener: () -> Unit = {},
 ) {
     @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
     androidx.compose.material3.pulltorefresh.PullToRefreshBox(isRefreshing = st.loading && st.hero != null, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
@@ -132,7 +135,7 @@ fun HomeContent(
             st.error?.let { item { ErrorBanner(it) } }
             item { Staggered(0) { HeroCard(st, onSelectHero, onOpenSymbol) } }
             item { Staggered(1) { MoodCard(st) } }
-            item { Staggered(2) { QuickActions(onOpenSymbol = { onOpenSymbol(st.heroIndex.symbol) }, onOpenAgent, onOpenPortfolio) } }
+            item { Staggered(2) { QuickActions(onOpenSymbol = { onOpenSymbol(st.heroIndex.symbol) }, onOpenAgent, onOpenPortfolio, onOpenScreener) } }
             item { SectionTitle("Global markets") }
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -302,9 +305,10 @@ private fun BreadthBar(adv: Int, dec: Int) {
 }
 
 @Composable
-private fun QuickActions(onOpenSymbol: () -> Unit, onOpenAgent: () -> Unit, onOpenPortfolio: () -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+private fun QuickActions(onOpenSymbol: () -> Unit, onOpenAgent: () -> Unit, onOpenPortfolio: () -> Unit, onOpenScreener: () -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         QuickAction(Icons.AutoMirrored.Filled.ShowChart, "Analyze", CapitolColors.market.chart1, Modifier.weight(1f), onOpenSymbol)
+        QuickAction(Icons.Default.FilterAlt, "Screener", CapitolColors.market.chart2, Modifier.weight(1f), onOpenScreener)
         QuickAction(Icons.Default.AutoAwesome, "Ask AI", CapitolColors.market.chart3, Modifier.weight(1f), onOpenAgent)
         QuickAction(Icons.Default.AccountBalanceWallet, "Portfolio", CapitolColors.market.bull, Modifier.weight(1f), onOpenPortfolio)
     }

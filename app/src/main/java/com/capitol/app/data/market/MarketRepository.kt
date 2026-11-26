@@ -52,7 +52,24 @@ class MarketRepository(
 
     suspend fun search(query: String): List<SymbolMatch> = source().search(query)
 
-    suspend fun fundamentals(symbol: String): Fundamentals = source().fundamentals(symbol)
+    private val fundCache = ConcurrentHashMap<String, Pair<Long, Fundamentals>>()
+
+    /** Fundamentals change slowly: cached for 12 hours in memory and on disk. */
+    suspend fun fundamentals(symbol: String, force: Boolean = false): Fundamentals {
+        val key = "FUND|${symbol.uppercase()}"
+        val now = System.currentTimeMillis()
+        if (!force) {
+            fundCache[key]?.takeIf { now - it.first < FUND_MS }?.let { return it.second }
+            withContext(Dispatchers.IO) {
+                fileFor(key)?.takeIf { it.exists() && now - it.lastModified() < FUND_MS }
+                    ?.let { f -> runCatching { json.decodeFromString<Fundamentals>(f.readText()) }.getOrNull() }
+            }?.let { fundCache[key] = now to it; return it }
+        }
+        val f = source().fundamentals(symbol)
+        fundCache[key] = now to f
+        withContext(Dispatchers.IO) { runCatching { fileFor(key)?.apply { parentFile?.mkdirs(); writeText(json.encodeToString(f)) } } }
+        return f
+    }
     suspend fun news(symbol: String): List<NewsItem> = source().news(symbol)
 
     /** Fetch many symbols in parallel; failures are dropped. */
@@ -72,5 +89,5 @@ class MarketRepository(
         runCatching { json.decodeFromString<PriceSeries>(f.readText()).copy(cachedAt = f.lastModified()) }.getOrNull()
     }
 
-    companion object { private const val CACHE_MS = 60_000L }
+    companion object { private const val CACHE_MS = 60_000L; private const val FUND_MS = 12 * 3_600_000L }
 }

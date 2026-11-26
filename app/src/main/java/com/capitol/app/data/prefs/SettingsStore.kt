@@ -27,6 +27,10 @@ data class AppSettings(
     val defaultIndicators: Set<IndicatorType> = IndicatorType.DEFAULTS,
     val autoCheckUpdates: Boolean = true,
     val indicatorParams: IndicatorParams = IndicatorParams.DEFAULT,
+    val appLock: Boolean = false,
+    /** Trade planner defaults. */
+    val tradeCapital: Double = 100_000.0,
+    val tradeRiskPct: Double = 1.0,
 )
 
 private val Context.dataStore by preferencesDataStore(name = "capitol_settings")
@@ -42,6 +46,9 @@ class SettingsStore(private val context: Context) {
         val indicators = stringSetPreferencesKey("default_indicators")
         val autoUpdates = booleanPreferencesKey("auto_updates")
         val params = stringPreferencesKey("indicator_params")
+        val appLock = booleanPreferencesKey("app_lock")
+        val capital = stringPreferencesKey("trade_capital")
+        val risk = stringPreferencesKey("trade_risk_pct")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p -> p.toSettings() }
@@ -59,6 +66,9 @@ class SettingsStore(private val context: Context) {
         autoCheckUpdates = this[K.autoUpdates] ?: true,
         indicatorParams = this[K.params]?.let { runCatching { paramsJson.decodeFromString<IndicatorParams>(it) }.getOrNull() }
             ?.sanitized() ?: IndicatorParams.DEFAULT,
+        appLock = this[K.appLock] ?: false,
+        tradeCapital = this[K.capital]?.toDoubleOrNull() ?: 100_000.0,
+        tradeRiskPct = this[K.risk]?.toDoubleOrNull() ?: 1.0,
     )
 
     suspend fun setTheme(mode: ThemeMode) = context.dataStore.edit { it[K.theme] = mode.name }
@@ -73,6 +83,11 @@ class SettingsStore(private val context: Context) {
         context.dataStore.edit { it[K.params] = paramsJson.encodeToString(p.sanitized()) }
 
     private val paramsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    suspend fun setAppLock(on: Boolean) = context.dataStore.edit { it[K.appLock] = on }
+    suspend fun setTradeDefaults(capital: Double, riskPct: Double) = context.dataStore.edit {
+        it[K.capital] = capital.coerceAtLeast(0.0).toString(); it[K.risk] = riskPct.coerceIn(0.1, 10.0).toString()
+    }
 
     suspend fun setAutoCheckUpdates(on: Boolean) = context.dataStore.edit { it[K.autoUpdates] = on }
 }

@@ -264,6 +264,10 @@ class CapitolAgent(
             "run_technical_analysis" -> "Analysing ${s("symbol")}" + (input["indicators"]?.let { " with $it" } ?: "")
             "get_price_summary" -> "Fetching price history for ${s("symbol")}"
             "get_watchlist" -> "Reading your watchlists"
+            "get_calendar" -> "Checking earnings & dividend dates"
+            "plan_trade" -> "Planning a trade on ${s("symbol")}"
+            "run_screener" -> "Screening ${s("universe")}"
+            "get_portfolio_analytics" -> "Analysing your portfolio"
             "get_fundamentals" -> "Fetching fundamentals for ${s("symbol")}"
             "get_news" -> "Reading news on ${s("symbol")}"
             "scan_watchlist" -> "Scanning your whole watchlist"

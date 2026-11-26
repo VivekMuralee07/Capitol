@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -67,6 +68,8 @@ import com.capitol.app.ui.components.changeColor
 import com.capitol.app.ui.theme.CapitolColors
 import com.capitol.app.ui.theme.NumberStyle
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class PortfolioViewModel(val c: AppContainer) : ViewModel() {
@@ -76,9 +79,27 @@ class PortfolioViewModel(val c: AppContainer) : ViewModel() {
     val kite get() = c.portfolio.kite
     val ind get() = c.portfolio.indmoney
 
-    init { if (c.portfolio.anyConnected) refresh() }
+    val analytics = MutableStateFlow<List<com.capitol.app.analysis.CurrencyAnalytics>>(emptyList())
+    val analyticsLoading = MutableStateFlow(false)
+    private var analyticsJob: kotlinx.coroutines.Job? = null
+
+    init {
+        if (c.portfolio.anyConnected) refresh()
+        viewModelScope.launch {
+            c.portfolio.state.map { it.holdings }.distinctUntilChanged().collect { if (it.isNotEmpty()) loadAnalytics(it) else analytics.value = emptyList() }
+        }
+    }
 
     fun refresh() = viewModelScope.launch { c.portfolio.refresh() }
+
+    private fun loadAnalytics(holdings: List<Holding>) {
+        analyticsJob?.cancel()
+        analyticsJob = viewModelScope.launch {
+            analyticsLoading.value = true
+            analytics.value = com.capitol.app.analysis.PortfolioLoader.load(c, holdings)
+            analyticsLoading.value = false
+        }
+    }
     fun saveKiteKeys(key: String, secret: String) { c.secrets.put(Key.KITE_API_KEY, key); c.secrets.put(Key.KITE_API_SECRET, secret) }
     fun completeKiteLogin(requestToken: String) = viewModelScope.launch {
         runCatching { kite.createSession(requestToken) }
@@ -144,6 +165,12 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
                 onAskAi("Review my portfolio holdings technically. Which positions look strongest and weakest, and what levels should I watch?")
             } }
             item { SectionTitle("Holdings (${st.holdings.size})") }
+            item {
+                val analytics by vm.analytics.collectAsStateWithLifecycle()
+                val loading by vm.analyticsLoading.collectAsStateWithLifecycle()
+                if (loading && analytics.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
+                analytics.forEach { a -> AnalyticsCard(a); Spacer(Modifier.height(12.dp)) }
+            }
             items(st.holdings, key = { it.broker.name + it.tradingSymbol + it.exchange }) { h -> HoldingRow(h) { onAnalyze(h.yahooSymbol) } }
         }
         item { SectionTitle("Connections") }
@@ -358,5 +385,92 @@ private fun KiteLoginDialog(url: String, onToken: (String) -> Unit, onDismiss: (
                 }
             }, modifier = Modifier.fillMaxSize())
         }
+    }
+}
+
+@Composable
+private fun AnalyticsCard(a: com.capitol.app.analysis.CurrencyAnalytics) {
+    val mc = CapitolColors.market
+    val primary = MaterialTheme.colorScheme.primary
+    val palette = listOf(primary, mc.chart2, mc.chart3, mc.chart4, mc.bull, mc.neutral, mc.grid.copy(alpha = 0.6f))
+    val sym = if (a.currency == "USD") "$" else "₹"
+    CapitolCard {
+        Text("Portfolio analytics · ${if (a.currency == "USD") "US stocks" else "Indian stocks"}", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.layout.Box(Modifier.size(120.dp), contentAlignment = Alignment.Center) {
+                com.capitol.app.ui.components.DonutChart(a.byHolding.mapIndexed { i, s -> s.value to palette[i % palette.size] }, Modifier.size(120.dp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("${a.health.size.coerceAtLeast(a.byHolding.size)}", style = MaterialTheme.typography.titleLarge)
+                    Text("holdings", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                a.byHolding.forEachIndexed { i, s ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.foundation.layout.Box(Modifier.size(8.dp).background(palette[i % palette.size], androidx.compose.foundation.shape.CircleShape))
+                        Spacer(Modifier.width(6.dp))
+                        Text(s.label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 1)
+                        Text("%.1f%%".format(s.pct), style = NumberStyle.copy(fontSize = 12.sp))
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Metric("Largest", "%.0f%%".format(a.largestPct), Modifier.weight(1f))
+            Metric("Top 5", "%.0f%%".format(a.top5Pct), Modifier.weight(1f))
+            Metric("Diversification", "${a.diversificationScore}/100", Modifier.weight(1f))
+        }
+        a.technicalScore?.let { ts ->
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Technical health", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Text("%+.2f".format(ts), style = NumberStyle.copy(fontSize = 13.sp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(8.dp))
+                com.capitol.app.ui.components.SignalChip(com.capitol.app.analysis.Signal.fromScore(ts))
+            }
+        }
+        if (a.bySector.size > 1 || a.bySector.firstOrNull()?.label != "Unknown") {
+            Spacer(Modifier.height(10.dp))
+            Text("Sectors", style = MaterialTheme.typography.labelLarge)
+            a.bySector.take(6).forEach { s ->
+                Row(Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(s.label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(130.dp), maxLines = 1)
+                    androidx.compose.foundation.layout.Box(Modifier.weight(1f).height(6.dp).background(MaterialTheme.colorScheme.surfaceVariant, androidx.compose.foundation.shape.RoundedCornerShape(3.dp))) {
+                        androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth((s.pct / 100).toFloat().coerceIn(0.02f, 1f)).height(6.dp)
+                            .background(primary, androidx.compose.foundation.shape.RoundedCornerShape(3.dp)))
+                    }
+                    Text("  %.0f%%".format(s.pct), style = NumberStyle.copy(fontSize = 11.sp))
+                }
+            }
+        }
+        if (a.valueHistory.size > 2) {
+            Spacer(Modifier.height(10.dp))
+            Row {
+                Text("Value of current holdings · 1 year", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                a.oneYearChangePct?.let { Text("%+.1f%%".format(it), color = com.capitol.app.ui.components.changeColor(it), style = NumberStyle.copy(fontSize = 12.sp)) }
+            }
+            com.capitol.app.ui.components.IndicatorPane(listOf(com.capitol.app.analysis.ChartLine("Value", a.valueHistory.map { it.second }, com.capitol.app.analysis.LineRole.PRIMARY)), height = 110.dp)
+            Text("Uses today's quantities at past prices — not your actual buy/sell history.", style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (a.winners.isNotEmpty() || a.losers.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text("Best: " + a.winners.joinToString { "${it.tradingSymbol} %+.0f%%".format(it.pnlPercent) }.ifBlank { "—" }, style = MaterialTheme.typography.bodySmall, color = mc.bull)
+            Text("Worst: " + a.losers.joinToString { "${it.tradingSymbol} %+.0f%%".format(it.pnlPercent) }.ifBlank { "—" }, style = MaterialTheme.typography.bodySmall, color = mc.bear)
+        }
+        a.warnings.forEach { Text("⚠ $it", style = MaterialTheme.typography.bodySmall, color = mc.neutral, modifier = Modifier.padding(top = 4.dp)) }
+        Text("Total $sym${"%,.0f".format(a.total)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 6.dp))
+    }
+}
+
+@Composable
+private fun Metric(label: String, value: String, modifier: Modifier) {
+    Column(modifier.background(MaterialTheme.colorScheme.surfaceVariant, androidx.compose.foundation.shape.RoundedCornerShape(10.dp)).padding(8.dp)) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = NumberStyle.copy(fontSize = 14.sp))
     }
 }

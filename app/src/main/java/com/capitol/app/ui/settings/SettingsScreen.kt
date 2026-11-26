@@ -170,6 +170,19 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit, onStartUpdate: () -> Uni
                 OutlinedButton({ scope.launch { c.updates.check() } }) { Text("Check for updates") }
             }
         }
+        item {
+            val activity = androidx.compose.ui.platform.LocalContext.current as androidx.fragment.app.FragmentActivity
+            var lockMsg by remember { mutableStateOf<String?>(null) }
+            CapitolCard {
+                Text("Security", style = MaterialTheme.typography.titleMedium)
+                ToggleRow("App lock", "Require fingerprint, face or screen lock to open Capitol (and after 1 minute away)", s.appLock) { on ->
+                    if (!com.capitol.app.ui.lock.AppLock.canLock(activity)) { lockMsg = "Set up a screen lock or fingerprint in Android settings first."; return@ToggleRow }
+                    com.capitol.app.ui.lock.AppLock.authenticate(activity, if (on) "Turn on app lock" else "Turn off app lock",
+                        onSuccess = { scope.launch { c.settings.setAppLock(on) }; lockMsg = null }, onFailure = { lockMsg = it })
+                }
+                lockMsg?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
         item { DiagnosticsCard() }
         item {
             CapitolCard {

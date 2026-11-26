@@ -1,6 +1,7 @@
 package com.capitol.app.agent
 
 import com.capitol.app.analysis.IndicatorType
+import com.capitol.app.analysis.Signal
 import com.capitol.app.analysis.TechnicalAnalyzer
 import com.capitol.app.data.broker.PortfolioRepository
 import com.capitol.app.data.mcp.IndMoneyMcp
@@ -51,6 +52,21 @@ class AgentTools(
             mapOf("symbol" to mapOf("type" to "string")), listOf("symbol")),
         Spec("get_news", "Get recent news headlines (title, publisher, time) for a symbol.",
             mapOf("symbol" to mapOf("type" to "string")), listOf("symbol")),
+        Spec("get_calendar", "Upcoming earnings and dividend dates (next 90 days) for every symbol in the user's watchlists.", emptyMap(), emptyList()),
+        Spec("plan_trade",
+            "Build a rules-based trade plan for a symbol: entry zone, stop-loss (ATR or just beyond the nearest support/resistance), targets at the next levels with reward/risk multiples, and position size from the user's capital and risk %. Use when the user asks where to enter, where to put a stop, targets or how much to buy.",
+            mapOf("symbol" to mapOf("type" to "string"),
+                "direction" to mapOf("type" to "string", "enum" to listOf("LONG", "SHORT")),
+                "capital" to mapOf("type" to "number", "description" to "Trading capital; defaults to the user's saved setting"),
+                "risk_pct" to mapOf("type" to "number", "description" to "Percent of capital to risk; defaults to the user's saved setting")),
+            listOf("symbol")),
+        Spec("run_screener",
+            "Scan a universe of stocks for those matching ALL given conditions. Universes: NIFTY50, BANKNIFTY, US_LARGE, WATCHLISTS. Set fresh_only to find setups that just triggered in the last 5 trading days.",
+            mapOf("universe" to mapOf("type" to "string", "enum" to com.capitol.app.analysis.Universe.entries.map { it.name }),
+                "conditions" to mapOf("type" to "array", "items" to mapOf("type" to "string", "enum" to com.capitol.app.analysis.ScreenCondition.entries.map { it.name })),
+                "rsi_level" to mapOf("type" to "number", "description" to "Level for RSI_BELOW / RSI_ABOVE (default 30 / 70)"),
+                "fresh_only" to mapOf("type" to "boolean")),
+            listOf("universe", "conditions")),
         Spec("get_watchlist", "List all of the user's Capitol watchlists and their symbols, with price and indicator alerts.", emptyMap(), emptyList()),
         Spec("scan_watchlist",
             "Run technical analysis on every symbol across all watchlists and return a compact ranked table (verdict, score, price, change). Use for 'what looks best/worst on my watchlist'.",
@@ -64,11 +80,18 @@ class AgentTools(
         Spec("get_portfolio",
             "Get the user's holdings from connected brokers (Zerodha Kite, INDmoney) or imported CSV: symbol, qty, average price, LTP and P&L. Read-only.",
             emptyMap(), emptyList()),
+        Spec("get_portfolio_analytics",
+            "Portfolio-level analysis of the user's holdings: allocation by holding and sector, concentration, diversification score, value-weighted technical health, best/worst performers and risk warnings.",
+            emptyMap(), emptyList()),
         Spec("list_indicators", "List every indicator Capitol supports, with a one-line description of each.", emptyMap(), emptyList()),
     )
 
     var defaultIndicators: Set<IndicatorType> = IndicatorType.DEFAULTS
     var params: com.capitol.app.analysis.IndicatorParams = com.capitol.app.analysis.IndicatorParams.DEFAULT
+    /** Set by the app container: computes portfolio analytics for holdings. */
+    var analyticsLoader: (suspend (List<com.capitol.app.data.broker.Holding>) -> List<com.capitol.app.analysis.CurrencyAnalytics>)? = null
+    var tradeCapital: Double = 100_000.0
+    var tradeRiskPct: Double = 1.0
 
     /** Executes a tool; returns text for the tool_result, or throws for an error result. */
     /** A tool exposed by a connected MCP server (INDmoney), renamed for Claude. */
@@ -122,6 +145,37 @@ class AgentTools(
                 "- ${n.title} (${n.publisher}${if (n.publishedAt > 0) ", " + fmt.format(java.util.Date(n.publishedAt * 1000)) else ""})"
             }.ifBlank { "No recent news found for $sym." }
         }
+        "get_calendar" -> {
+            val now = System.currentTimeMillis() / 1000
+            val df = java.text.SimpleDateFormat("EEE dd MMM yyyy", java.util.Locale.US)
+            com.capitol.app.data.market.EventsCalendar.load(market, watchlist.all().map { it.symbol to it.name }, now)
+                .joinToString("\n") { "${df.format(java.util.Date(it.epochSeconds * 1000))}: ${it.symbol} ${it.type.label} (in ${it.daysFrom(now)} days)" }
+                .ifBlank { "No upcoming earnings or dividend dates found for the watchlist." }
+        }
+        "plan_trade" -> {
+            val sym = input.s("symbol") ?: error("symbol is required")
+            val dir = if (input.s("direction") == "SHORT") com.capitol.app.analysis.Direction.SHORT else com.capitol.app.analysis.Direction.LONG
+            val series = market.history(sym, ChartRange.Y1)
+            val verdict = TechnicalAnalyzer.analyze(series, defaultIndicators, params).verdict
+            val capital = (input["capital"] as? JsonPrimitive)?.content?.toDoubleOrNull() ?: tradeCapital
+            val risk = (input["risk_pct"] as? JsonPrimitive)?.content?.toDoubleOrNull() ?: tradeRiskPct
+            com.capitol.app.analysis.TradePlanner.plan(series, dir, capital, risk, params, verdict)
+                ?.toPlainText(series.symbol, series.currency) ?: "Not enough price history to plan a trade for $sym."
+        }
+        "run_screener" -> {
+            val u = com.capitol.app.analysis.Universe.entries.firstOrNull { it.name == input.s("universe") } ?: error("unknown universe")
+            val level = (input["rsi_level"] as? JsonPrimitive)?.content?.toDoubleOrNull()
+            val filters = input.list("conditions").mapNotNull { n -> com.capitol.app.analysis.ScreenCondition.entries.firstOrNull { it.name == n } }
+                .map { com.capitol.app.analysis.ScreenFilter(it, if (it.needsValue) level ?: it.defaultValue else null) }
+            if (filters.isEmpty()) error("at least one condition is required")
+            val fresh = (input["fresh_only"] as? JsonPrimitive)?.content == "true"
+            val symbols = if (u == com.capitol.app.analysis.Universe.WATCHLISTS) watchlist.all().map { it.symbol } else u.symbols
+            val hits = com.capitol.app.analysis.Screener.run(market, symbols, filters, fresh, params, defaultIndicators)
+            if (hits.isEmpty()) "No matches in ${u.label} (${symbols.size} scanned) for: ${filters.joinToString { it.description }}${if (fresh) " (just triggered)" else ""}."
+            else "${hits.size} matches in ${u.label}:\n" + hits.take(25).joinToString("\n") {
+                "${it.symbol}: ${it.verdict.label} (score ${"%+.2f".format(it.score)}), ${"%.2f".format(it.price)} ${it.currency} (${"%+.2f".format(it.changePct)}%) — ${it.reasons.joinToString("; ")}"
+            }
+        }
         "get_watchlist" -> {
             val d = watchlist.snapshot()
             d.lists.joinToString("\n\n") { l ->
@@ -161,6 +215,25 @@ class AgentTools(
                     "\nTotal (${t.currency}): invested ${"%.2f".format(t.invested)}, current ${"%.2f".format(t.current)}, P&L ${"%+.2f".format(t.pnlPercent)}%"
                 } +
                     st.errors.joinToString("") { "\nError: $it" })
+            }
+        }
+        "get_portfolio_analytics" -> {
+            if (!portfolio.anyConnected) "No broker connected. The user can connect Zerodha Kite or INDmoney, or import a CSV, in the Portfolio tab."
+            else {
+                portfolio.refresh()
+                val list = analyticsLoader?.invoke(portfolio.state.value.holdings).orEmpty()
+                if (list.isEmpty()) "No holdings to analyse." else list.joinToString("\n\n") { a ->
+                    buildString {
+                        appendLine("${a.currency} portfolio: total ${"%,.0f".format(a.total)}")
+                        appendLine("Allocation: " + a.byHolding.joinToString { "${it.label} ${"%.1f".format(it.pct)}%" })
+                        appendLine("Sectors: " + a.bySector.joinToString { "${it.label} ${"%.0f".format(it.pct)}%" })
+                        appendLine("Largest ${"%.0f".format(a.largestPct)}%, top-5 ${"%.0f".format(a.top5Pct)}%, effective holdings ${"%.1f".format(a.effectiveHoldings)}, diversification ${a.diversificationScore}/100")
+                        a.technicalScore?.let { appendLine("Value-weighted technical score ${"%+.2f".format(it)} (${Signal.fromScore(it).label})") }
+                        appendLine("Holdings health: " + a.health.joinToString { "${it.symbol} ${it.verdict.label} (${"%.0f".format(it.weightPct)}%)" })
+                        a.oneYearChangePct?.let { appendLine("Current holdings over the past year: ${"%+.1f".format(it)}%") }
+                        a.warnings.forEach { appendLine("Warning: $it") }
+                    }
+                }
             }
         }
         "list_indicators" -> IndicatorType.entries.joinToString("\n") { "${it.name} (${it.category.label}): ${it.about}" }
