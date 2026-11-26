@@ -24,8 +24,20 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # Robolectric (screenshot tests) downloads its android-all jar at test time.
+      # Cache it, and fetch it from Google's Maven Central mirror, which isn't rate-limited
+      # like repo.maven.apache.org.
+      - name: Cache Robolectric runtime jars
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ hashFiles('app/build.gradle.kts') }}
+          restore-keys: robolectric-
+
       - name: Unit tests
-        run: ./gradlew :app:testDebugUnitTest --no-daemon
+        run: >
+          ./gradlew :app:testDebugUnitTest --no-daemon
+          -ProbolectricRepo=https://maven-central.storage-download.googleapis.com/maven2/
 
       - name: Compute version
         id: ver
