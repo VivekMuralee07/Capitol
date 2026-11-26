@@ -127,9 +127,8 @@ class UpdateManager(private val context: Context, private val http: OkHttpClient
     }
 
     private fun download(url: String) {
-        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "updates").apply { mkdirs() }
-        dir.listFiles()?.forEach { it.delete() }
-        val file = File(dir, "capitol-update.apk")
+        val file = apkFile(context)
+        file.parentFile?.apply { mkdirs(); listFiles()?.forEach { it.delete() } }
         val dm = context.getSystemService(DownloadManager::class.java)
         val id = dm.enqueue(
             DownloadManager.Request(Uri.parse(url))
@@ -161,23 +160,37 @@ class UpdateManager(private val context: Context, private val http: OkHttpClient
 
     /** Launches the system package installer for the downloaded APK. */
     fun install(activity: Activity) {
-        val apk = downloadedApk ?: return
-        if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
-            activity.startActivity(
-                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
-            )
-            return
+        val apk = downloadedApk ?: apkFile(context).takeIf { it.exists() } ?: run {
+            _state.value = State.Error("The downloaded update is missing. Please download it again."); return
         }
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apk)
-        activity.startActivity(
-            Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
+        try {
+            if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
+                // Android asks the user to allow Capitol to install apps; they then tap Install again.
+                activity.startActivity(
+                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
+                )
+                return
+            }
+            activity.startActivity(installIntent(context, apk))
+        } catch (e: Exception) {
+            // Never crash the app over an update: surface the problem instead.
+            _state.value = State.Error("Couldn't open the installer: ${e.message}")
+        }
     }
 
     fun dismiss() { if (_state.value !is State.Downloading) _state.value = State.Idle }
 
     companion object {
+        /** Where downloaded update APKs are stored; must be covered by res/xml/file_paths.xml. */
+        fun apkFile(context: Context): File = File(File(context.getExternalFilesDir(null), "updates"), "capitol-update.apk")
+
+        /** Intent that opens the system package installer for [apk] via the app's FileProvider. */
+        fun installIntent(context: Context, apk: File): Intent {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apk)
+            return Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
         /** Semantic-ish version comparison: "1.2.10" > "1.2.9". */
         fun isNewer(candidate: String, current: String): Boolean {
             fun parts(v: String) = v.split('.', '-', '+').map { it.toIntOrNull() ?: 0 }
