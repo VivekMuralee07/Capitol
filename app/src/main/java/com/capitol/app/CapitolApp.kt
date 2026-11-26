@@ -76,6 +76,7 @@ class CapitolApp : Application() {
                 .collect { (on, hours, ip) ->
                     container.agentTools.defaultIndicators = ip.first
                     container.agentTools.params = ip.second
+                    container.settings.settings.first().let { container.agentTools.tradeCapital = it.tradeCapital; container.agentTools.tradeRiskPct = it.tradeRiskPct }
                     AutopilotWorker.schedule(this@CapitolApp, on, hours)
                 }
         }

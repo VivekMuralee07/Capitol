@@ -40,6 +40,10 @@ data class AnalysisState(
     val backtest: com.capitol.app.analysis.BacktestResult? = null,
     val backtestProgress: Float? = null,
     val backtestHorizon: Int = 20,
+    val tradeDirection: com.capitol.app.analysis.Direction = com.capitol.app.analysis.Direction.LONG,
+    val tradeCapital: Double = 100_000.0,
+    val tradeRiskPct: Double = 1.0,
+    val tradePlan: com.capitol.app.analysis.TradePlan? = null,
 ) {
     /** True when the daily and weekly verdicts point the same way. */
     val timeframesAligned: Boolean? get() = timeframes.takeIf { it.size >= 2 }?.map { it.second.verdict }?.let { v ->
@@ -66,7 +70,8 @@ class AnalysisViewModel(private val c: AppContainer) : ViewModel() {
     init {
         viewModelScope.launch {
             val st = c.settings.settings.first()
-            _state.value = _state.value.copy(selected = st.defaultIndicators, params = st.indicatorParams)
+            _state.value = _state.value.copy(selected = st.defaultIndicators, params = st.indicatorParams,
+                tradeCapital = st.tradeCapital, tradeRiskPct = st.tradeRiskPct)
         }
         viewModelScope.launch {
             c.settings.settings.map { it.indicatorParams }.distinctUntilChanged().collect { p ->
@@ -136,6 +141,20 @@ class AnalysisViewModel(private val c: AppContainer) : ViewModel() {
         }
     }
 
+    fun setTradeDirection(d: com.capitol.app.analysis.Direction) { _state.value = _state.value.copy(tradeDirection = d); replan() }
+
+    fun setTradeDefaults(capital: Double, riskPct: Double) {
+        _state.value = _state.value.copy(tradeCapital = capital, tradeRiskPct = riskPct.coerceIn(0.1, 10.0)); replan()
+        viewModelScope.launch { c.settings.setTradeDefaults(capital, riskPct) }
+    }
+
+    private fun replan() {
+        val st = _state.value
+        val s = st.series ?: return
+        _state.value = st.copy(tradePlan = com.capitol.app.analysis.TradePlanner.plan(
+            s, st.tradeDirection, st.tradeCapital, st.tradeRiskPct, st.params, st.report?.verdict))
+    }
+
     private var tfJob: Job? = null
 
     /** Daily + weekly verdicts with the selected indicators (multi-timeframe confirmation). */
@@ -198,6 +217,8 @@ class AnalysisViewModel(private val c: AppContainer) : ViewModel() {
 
     private fun recompute() {
         val s = _state.value.series ?: return
-        _state.value = _state.value.copy(report = TechnicalAnalyzer.analyze(s, _state.value.selected, _state.value.params))
+        val report = TechnicalAnalyzer.analyze(s, _state.value.selected, _state.value.params)
+        _state.value = _state.value.copy(report = report)
+        replan()
     }
 }

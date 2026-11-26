@@ -54,6 +54,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -194,6 +195,7 @@ fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onCompare: (St
                     onAskAi("Explain the technical picture for ${report.symbol} using ${st.selected.joinToString { it.shortName }}. What are the key levels and what would change the view?")
                 }) }
                 if (report.keyLevels.isNotEmpty()) item { LevelsCard(report) }
+                item { TradePlannerCard(st, vm::setTradeDirection, vm::setTradeDefaults) }
                 item { BacktestCard(st, vm::runBacktest) }
                 st.fundamentals?.let { f -> item { FundamentalsCard(f, st.series?.currency) } }
                 if (st.news.isNotEmpty()) item { NewsCard(st.news) }
@@ -589,5 +591,72 @@ private fun NewsCard(news: List<com.capitol.app.data.market.NewsItem>) {
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+}
+
+@Composable
+private fun TradePlannerCard(
+    st: AnalysisState,
+    onDirection: (com.capitol.app.analysis.Direction) -> Unit,
+    onDefaults: (Double, Double) -> Unit,
+) {
+    var editing by remember { mutableStateOf(false) }
+    val plan = st.tradePlan
+    val mc = CapitolColors.market
+    val ccy = st.series?.currency.orEmpty()
+    CapitolCard {
+        Text("Trade planner", style = MaterialTheme.typography.titleMedium)
+        Text("Entry, stop-loss, targets and position size from the chart's levels", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
+        androidx.compose.material3.SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            com.capitol.app.analysis.Direction.entries.forEachIndexed { i, d ->
+                SegmentedButton(st.tradeDirection == d, { onDirection(d) },
+                    androidx.compose.material3.SegmentedButtonDefaults.itemShape(i, 2)) { Text(d.label) }
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+            Text("Capital ${"%,.0f".format(st.tradeCapital)} $ccy · risk ${"%.1f".format(st.tradeRiskPct)}% per trade",
+                style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+            TextButton({ editing = true }) { Text("Change") }
+        }
+        if (plan == null) { Text("Not enough data to plan a trade.", style = MaterialTheme.typography.bodySmall); return@CapitolCard }
+        val rows = buildList {
+            add(Triple("Entry zone", "${"%,.2f".format(plan.entryZoneLow)} – ${"%,.2f".format(plan.entryZoneHigh)}", MaterialTheme.colorScheme.onSurface))
+            add(Triple("Stop-loss", "%,.2f".format(plan.stop), mc.bear))
+            plan.targets.forEach { add(Triple("Target · ${it.label}", "${"%,.2f".format(it.price)}  (${"%.1f".format(it.rMultiple)}R)", mc.bull)) }
+            add(Triple("Quantity", "${plan.quantity} shares ≈ ${"%,.0f".format(plan.positionValue)}", MaterialTheme.colorScheme.onSurface))
+            add(Triple("Money at risk", "%,.0f".format(plan.riskAmount), mc.neutral))
+        }
+        rows.forEach { (k, v, col) ->
+            Row(Modifier.padding(vertical = 3.dp)) {
+                Text(k, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Text(v, style = NumberStyle.copy(fontSize = 13.sp), color = col)
+            }
+        }
+        Text("Stop placed ${plan.stopReason}. ATR ${"%,.2f".format(plan.atr)}.", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        plan.warnings.forEach { Text("⚠ $it", style = MaterialTheme.typography.bodySmall, color = mc.neutral, modifier = Modifier.padding(top = 4.dp)) }
+        Text("Educational plan based on technical levels — not investment advice.", style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+    }
+    if (editing) {
+        var cap by remember { mutableStateOf("%.0f".format(st.tradeCapital)) }
+        var risk by remember { mutableStateOf(st.tradeRiskPct.toString()) }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { editing = false },
+            title = { Text("Position sizing") },
+            text = {
+                Column {
+                    OutlinedTextField(cap, { cap = it }, label = { Text("Trading capital") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+                    OutlinedTextField(risk, { risk = it }, label = { Text("Risk per trade (%)") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal))
+                    Text("Many traders risk 0.5–2% of capital per trade.", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = { TextButton({ onDefaults(cap.toDoubleOrNull() ?: st.tradeCapital, risk.toDoubleOrNull() ?: st.tradeRiskPct); editing = false }) { Text("Save") } },
+            dismissButton = { TextButton({ editing = false }) { Text("Cancel") } },
+        )
     }
 }

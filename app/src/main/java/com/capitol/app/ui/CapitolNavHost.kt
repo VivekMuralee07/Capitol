@@ -105,6 +105,7 @@ fun CapitolNavHost(c: AppContainer, isDark: Boolean, nav: NavHostController = re
                         vm, isDark,
                         onToggleTheme = { scope.launch { c.settings.setTheme(if (isDark) ThemeMode.LIGHT else ThemeMode.DARK) } },
                         onOpenSymbol = openSymbol, onOpenAgent = { go("agent") }, onOpenPortfolio = { go("portfolio") },
+                        onOpenScreener = { nav.navigate("screener") },
                         onOpenSettings = { nav.navigate("settings") },
                     )
                 }
@@ -129,6 +130,10 @@ fun CapitolNavHost(c: AppContainer, isDark: Boolean, nav: NavHostController = re
                     val vm: com.capitol.app.ui.compare.CompareViewModel = viewModel { com.capitol.app.ui.compare.CompareViewModel(c) }
                     com.capitol.app.ui.compare.CompareScreen(vm, e.arguments?.getString("symbols")?.split(',')?.filter { it.isNotBlank() }.orEmpty(),
                         onBack = { nav.popBackStack() }, onOpen = openSymbol)
+                }
+                composable("screener") {
+                    val vm: com.capitol.app.ui.screener.ScreenerViewModel = viewModel { com.capitol.app.ui.screener.ScreenerViewModel(c) }
+                    com.capitol.app.ui.screener.ScreenerScreen(vm, onBack = { nav.popBackStack() }, onOpen = openSymbol)
                 }
                 composable("calendar") {
                     val vm: com.capitol.app.ui.calendar.CalendarViewModel = viewModel { com.capitol.app.ui.calendar.CalendarViewModel(c) }
