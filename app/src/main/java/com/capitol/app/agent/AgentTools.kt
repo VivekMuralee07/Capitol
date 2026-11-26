@@ -122,8 +122,10 @@ class AgentTools(
                 portfolio.refresh()
                 val st = portfolio.state.value
                 (st.holdings.joinToString("\n") {
-                    "${it.yahooSymbol} [${it.broker.label}] qty ${it.quantity}, avg ${"%.2f".format(it.averagePrice)}, LTP ${"%.2f".format(it.lastPrice)}, P&L ${"%.2f".format(it.pnl)} (${"%+.2f".format(it.pnlPercent)}%)"
-                } + "\nTotal invested ${"%.2f".format(st.invested)}, current ${"%.2f".format(st.current)}, P&L ${"%+.2f".format(st.pnlPercent)}%" +
+                    "${it.yahooSymbol} [${it.broker.label}, ${it.currency}] qty ${it.quantity}, avg ${"%.2f".format(it.averagePrice)}, LTP ${"%.2f".format(it.lastPrice)}, P&L ${"%.2f".format(it.pnl)} (${"%+.2f".format(it.pnlPercent)}%)"
+                } + st.totalsByCurrency.joinToString("") { t ->
+                    "\nTotal (${t.currency}): invested ${"%.2f".format(t.invested)}, current ${"%.2f".format(t.current)}, P&L ${"%+.2f".format(t.pnlPercent)}%"
+                } +
                     st.errors.joinToString("") { "\nError: $it" })
             }
         }

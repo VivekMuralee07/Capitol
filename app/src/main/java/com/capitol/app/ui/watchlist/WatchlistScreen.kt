@@ -69,6 +69,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 data class WatchRow(val item: WatchItem, val series: PriceSeries?, val report: AnalysisReport?)
@@ -87,6 +90,12 @@ class WatchlistViewModel(private val c: AppContainer) : ViewModel() {
                 publish(items)
                 val missing = items.filter { it.symbol !in cache }
                 if (missing.isNotEmpty()) load(missing)
+            }
+        }
+        viewModelScope.launch {
+            c.settings.settings.map { it.defaultIndicators }.distinctUntilChanged().drop(1).collect { inds ->
+                cache.replaceAll { _, (s, _) -> s to s?.let { TechnicalAnalyzer.analyze(it, inds) } }
+                publish(c.watchlist.current())
             }
         }
     }

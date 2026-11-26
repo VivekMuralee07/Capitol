@@ -70,6 +70,17 @@ class AnalyzerTest {
         assertEquals(1000.0, h[0].pnl, 1e-9)
     }
 
+    @Test fun csvImportUsStocks() {
+        // No exchange column: the "US stocks" switch decides.
+        val us = IndMoneyClient.parseCsv("Symbol,Quantity,Avg Price,LTP\nAAPL,2.5,180,230\nNVDA,5,95,140", defaultExchange = "US")
+        assertEquals(listOf("AAPL", "NVDA"), us.map { it.yahooSymbol })
+        assertTrue(us.all { it.currency == "USD" })
+        // Explicit exchange column wins over the default; Yahoo suffixes are not doubled.
+        val mixed = IndMoneyClient.parseCsv("Symbol,Qty,Avg Price,Exchange\nTSLA,1,200,NASDAQ\nINFY.NS,3,1500,\nTCS,1,3500,BSE")
+        assertEquals(listOf("TSLA", "INFY.NS", "TCS.BO"), mixed.map { it.yahooSymbol })
+        assertEquals(listOf("USD", "INR", "INR"), mixed.map { it.currency })
+    }
+
     @Test fun versionComparison() {
         assertTrue(UpdateManager.isNewer("1.2.10", "1.2.9"))
         assertTrue(UpdateManager.isNewer("2.0", "1.9.9"))
