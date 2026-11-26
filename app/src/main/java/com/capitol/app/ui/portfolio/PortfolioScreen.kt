@@ -32,6 +32,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,6 +53,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.capitol.app.AppContainer
+import com.capitol.app.data.broker.CurrencyTotal
 import com.capitol.app.data.broker.Holding
 import com.capitol.app.data.broker.KiteConnectClient
 import com.capitol.app.data.prefs.SecretStore.Key
@@ -84,7 +86,11 @@ class PortfolioViewModel(val c: AppContainer) : ViewModel() {
     fun kiteLogout() { kite.logout(); refresh() }
     fun saveIndToken(token: String) { c.secrets.put(Key.INDMONEY_ACCESS_TOKEN, token); refresh() }
     fun indDisconnect() { ind.disconnect(); refresh() }
-    fun importCsv(text: String) { message.value = "Imported ${c.portfolio.importCsv(text)} holdings from CSV" }
+    fun importCsv(text: String, usStocks: Boolean) {
+        val n = c.portfolio.importCsv(text, usStocks)
+        message.value = if (n == 0) "No holdings found — the CSV needs symbol and quantity columns"
+        else "Imported $n ${if (usStocks) "US" else "Indian"} holdings from CSV"
+    }
 }
 
 @Composable
@@ -94,8 +100,9 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
     val secretsV by vm.secretsVersion.collectAsStateWithLifecycle()
     var kiteLoginUrl by remember { mutableStateOf<String?>(null) }
     val ctx = LocalContext.current
+    var csvIsUs by remember { mutableStateOf(false) }
     val csvPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { ctx.contentResolver.openInputStream(it)?.bufferedReader()?.use { r -> vm.importCsv(r.readText()) } }
+        uri?.let { ctx.contentResolver.openInputStream(it)?.bufferedReader()?.use { r -> vm.importCsv(r.readText(), csvIsUs) } }
     }
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -113,7 +120,7 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
         msg?.let { item { Text(it, color = MaterialTheme.colorScheme.primary) } }
         st.errors.forEach { e -> item { ErrorBanner(e) } }
         if (st.holdings.isNotEmpty()) {
-            item { SummaryCard(st.invested, st.current, st.pnl, st.pnlPercent) {
+            item { SummaryCard(st.totalsByCurrency) {
                 onAskAi("Review my portfolio holdings technically. Which positions look strongest and weakest, and what levels should I watch?")
             } }
             item { SectionTitle("Holdings (${st.holdings.size})") }
@@ -125,8 +132,17 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
         item {
             CapitolCard {
                 Text("Import holdings CSV", style = MaterialTheme.typography.titleMedium)
-                Text("Export holdings from INDmoney (or any broker) and import them. Needs columns: symbol, quantity, average price (optional: ltp, exchange).",
+                Text("Export holdings from INDmoney (or any broker) and import them. Needs columns: symbol, quantity, average price (optional: ltp, exchange). Import Indian and US files separately — each import replaces earlier holdings of the same market.",
                     style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("These are US stocks", style = MaterialTheme.typography.bodyLarge)
+                        Text("Tickers like AAPL, NVDA (no .NS suffix), values in USD", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(csvIsUs, { csvIsUs = it })
+                }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton({ csvPicker.launch(arrayOf("text/*", "text/csv", "application/vnd.ms-excel")) }) {
                     Icon(Icons.Default.UploadFile, null); Spacer(Modifier.width(6.dp)); Text("Choose CSV")
@@ -141,13 +157,17 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
 }
 
 @Composable
-private fun SummaryCard(invested: Double, current: Double, pnl: Double, pct: Double, onAskAi: () -> Unit) {
+private fun SummaryCard(totals: List<CurrencyTotal>, onAskAi: () -> Unit) {
     CapitolCard {
-        Text("Current value", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        AnimatedNumber(current, fontSize = 30)
-        Row {
-            Text("Invested %,.2f".format(invested), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-            Text("P&L %+,.2f (%+.2f%%)".format(pnl, pct), color = changeColor(pnl), style = NumberStyle.copy(fontSize = 13.sp))
+        totals.forEachIndexed { i, t ->
+            if (i > 0) Spacer(Modifier.height(10.dp))
+            Text("Current value · ${if (t.currency == "USD") "US stocks" else "Indian stocks"}", style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            AnimatedNumber(t.current, fontSize = 28, format = { "${t.symbol}%,.2f".format(it) })
+            Row {
+                Text("Invested ${t.symbol}%,.2f".format(t.invested), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                Text("P&L %+,.2f (%+.2f%%)".format(t.pnl, t.pnlPercent), color = changeColor(t.pnl), style = NumberStyle.copy(fontSize = 13.sp))
+            }
         }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onAskAi) { Icon(Icons.Default.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text("AI portfolio review") }
@@ -160,11 +180,11 @@ private fun HoldingRow(h: Holding, onClick: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(h.tradingSymbol, style = MaterialTheme.typography.titleSmall)
-                Text("${h.broker.label} · ${h.exchange} · ${"%.0f".format(h.quantity)} @ ${"%,.2f".format(h.averagePrice)}",
+                Text("${h.broker.label} · ${h.exchange} · ${"%.4g".format(h.quantity)} @ ${"%,.2f".format(h.averagePrice)}",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text("%,.2f".format(h.current), style = NumberStyle.copy(fontSize = 14.sp))
+                Text((if (h.isUs) "$" else "₹") + "%,.2f".format(h.current), style = NumberStyle.copy(fontSize = 14.sp))
                 Text("%+,.2f (%+.1f%%)".format(h.pnl, h.pnlPercent), color = changeColor(h.pnl), style = NumberStyle.copy(fontSize = 12.sp))
             }
         }

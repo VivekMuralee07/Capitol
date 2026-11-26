@@ -16,11 +16,19 @@ data class Holding(
     val pnl get() = current - invested
     val pnlPercent get() = if (invested == 0.0) 0.0 else pnl / invested * 100
 
-    /** Symbol in yfinance / Yahoo notation (NSE → .NS, BSE → .BO). */
-    val yahooSymbol: String get() = when (exchange.uppercase()) {
-        "NSE" -> "$tradingSymbol.NS"
-        "BSE" -> "$tradingSymbol.BO"
-        else -> tradingSymbol
+    val isUs: Boolean get() = isUsExchange(exchange)
+    val currency: String get() = if (isUs) "USD" else "INR"
+
+    /** Symbol in yfinance / Yahoo notation (NSE → .NS, BSE → .BO, US tickers unchanged). */
+    val yahooSymbol: String get() = when {
+        isUs -> tradingSymbol
+        exchange.equals("BSE", true) -> "$tradingSymbol.BO"
+        else -> "$tradingSymbol.NS"
+    }
+
+    companion object {
+        private val US_EXCHANGES = setOf("US", "USA", "NASDAQ", "NYSE", "AMEX", "NYSEARCA", "ARCA", "BATS", "NMS", "NYQ", "NGM", "NCM")
+        fun isUsExchange(ex: String) = ex.trim().uppercase().replace(" ", "") in US_EXCHANGES
     }
 }
 

@@ -77,8 +77,10 @@ class IndMoneyClient(private val http: OkHttpClient, private val secrets: Secret
         /**
          * Parses a holdings CSV exported from INDmoney (or any broker). Expected columns
          * (case-insensitive, any order): symbol, quantity, avg price[, ltp][, exchange].
+         * Rows without a recognised exchange use [defaultExchange]: "NSE" for Indian
+         * stocks or "US" for US stocks. An explicit exchange column always wins.
          */
-        fun parseCsv(text: String): List<Holding> {
+        fun parseCsv(text: String, defaultExchange: String = "NSE"): List<Holding> {
             val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
             if (lines.size < 2) return emptyList()
             val header = lines.first().split(',').map { it.trim().lowercase().replace("\"", "") }
@@ -94,8 +96,16 @@ class IndMoneyClient(private val http: OkHttpClient, private val secrets: Secret
                 val sym = c.getOrNull(iSym)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                 val qty = c.getOrNull(iQty)?.toDoubleOrNull() ?: return@mapNotNull null
                 val avg = c.getOrNull(iAvg)?.toDoubleOrNull() ?: 0.0
-                Holding(Broker.INDMONEY, sym.uppercase(), c.getOrNull(iEx)?.uppercase() ?: "NSE", qty, avg,
-                    c.getOrNull(iLtp)?.toDoubleOrNull() ?: avg, null)
+                val rawEx = c.getOrNull(iEx)?.trim()?.uppercase().orEmpty()
+                val ex = when {
+                    Holding.isUsExchange(rawEx) -> "US"
+                    rawEx.contains("BSE") -> "BSE"
+                    rawEx.contains("NSE") -> "NSE"
+                    else -> defaultExchange
+                }
+                // Strip Yahoo-style suffixes so ".NS"/".BO" tickers aren't doubled up.
+                val clean = sym.uppercase().removeSuffix(".NS").removeSuffix(".BO")
+                Holding(Broker.INDMONEY, clean, ex, qty, avg, c.getOrNull(iLtp)?.toDoubleOrNull() ?: avg, null)
             }
         }
     }

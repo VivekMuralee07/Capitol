@@ -12,10 +12,16 @@ data class PortfolioState(
     val loading: Boolean = false,
     val updatedAt: Long? = null,
 ) {
-    val invested get() = holdings.sumOf { it.invested }
-    val current get() = holdings.sumOf { it.current }
+    /** Totals per currency — INR and USD holdings are never summed together. */
+    val totalsByCurrency: List<CurrencyTotal> get() = holdings.groupBy { it.currency }.map { (ccy, hs) ->
+        CurrencyTotal(ccy, hs.sumOf { it.invested }, hs.sumOf { it.current })
+    }.sortedBy { if (it.currency == "INR") 0 else 1 }
+}
+
+data class CurrencyTotal(val currency: String, val invested: Double, val current: Double) {
     val pnl get() = current - invested
     val pnlPercent get() = if (invested == 0.0) 0.0 else pnl / invested * 100
+    val symbol get() = when (currency) { "INR" -> "₹"; "USD" -> "$"; else -> "$currency " }
 }
 
 class PortfolioRepository(val kite: KiteConnectClient, val indmoney: IndMoneyClient) {
@@ -36,11 +42,17 @@ class PortfolioRepository(val kite: KiteConnectClient, val indmoney: IndMoneyCli
         )
     }
 
-    fun importCsv(text: String): Int {
+    /**
+     * Imports a holdings CSV. Re-importing replaces earlier imported holdings of the
+     * same market (India or US), so an Indian and a US file can both be loaded.
+     */
+    fun importCsv(text: String, usStocks: Boolean = false): Int {
         val previous = imported
-        imported = IndMoneyClient.parseCsv(text)
+        val parsed = IndMoneyClient.parseCsv(text, if (usStocks) "US" else "NSE")
+        val markets = parsed.map { it.isUs }.toSet()
+        imported = previous.filterNot { it.isUs in markets } + parsed
         _state.value = _state.value.copy(holdings = _state.value.holdings.filter { it !in previous } + imported)
-        return imported.size
+        return parsed.size
     }
 
     val anyConnected get() = kite.isConnected || indmoney.isConnected || imported.isNotEmpty()
