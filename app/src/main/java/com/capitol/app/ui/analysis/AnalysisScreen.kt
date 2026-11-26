@@ -154,6 +154,20 @@ fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onAskAi: (Stri
                     CapitolCard(padding = PaddingValues(8.dp)) {
                         PriceChart(series.candles, overlays = overlays, levels = levels, mode = chartMode, intraday = st.range.isIntraday, height = 300.dp)
                         if (overlays.isNotEmpty()) Legend(overlays.map { it.name to it.role })
+                        // Oscillators / volume indicators get their own stacked panes under the price chart.
+                        report?.results?.filter { it.available && it.type.pane == Pane.SEPARATE && it.lines.isNotEmpty() }?.forEach { r ->
+                            HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                            Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(r.type.title, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(r.signal.label, style = MaterialTheme.typography.labelMedium, color = signalColor(r.signal))
+                            }
+                            IndicatorPane(r.lines, levels = r.levels, height = 90.dp)
+                            Legend(r.lines.map { it.name to it.role })
+                        }
+                        if (overlays.isEmpty() && report?.results?.none { it.available && it.type.pane == Pane.SEPARATE } == true) {
+                            Text("Select indicators with the Filter button to plot them here.", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(8.dp))
+                        }
                     }
                 }
             }
@@ -408,10 +422,6 @@ private fun IndicatorCard(r: IndicatorResult) {
                     }
                 }
             }
-        }
-        if (r.available && r.type.pane == Pane.SEPARATE && r.lines.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            IndicatorPane(r.lines, levels = r.levels, height = 110.dp)
         }
         Spacer(Modifier.height(8.dp))
         Text("What it says now", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)

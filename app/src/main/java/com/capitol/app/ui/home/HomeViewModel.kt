@@ -14,6 +14,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 data class MarketIndex(val symbol: String, val label: String, val region: String)
@@ -37,7 +42,30 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(HomeState())
     val state: StateFlow<HomeState> = _state.asStateFlow()
 
-    init { refresh() }
+    init {
+        refresh()
+        // Keep the home page in sync with the watchlist and default indicators.
+        viewModelScope.launch {
+            combine(
+                c.watchlist.items.map { items -> items.map { it.symbol } },
+                c.settings.settings.map { it.defaultIndicators },
+            ) { symbols, inds -> symbols to inds }
+                .distinctUntilChanged()
+                .drop(1) // the initial value is already handled by refresh()
+                .collect { (symbols, inds) -> refreshWatch(symbols, inds) }
+        }
+    }
+
+    /** Reloads only the watchlist-driven sections (movers, heatmap, mood, breadth). */
+    private suspend fun refreshWatch(symbols: List<String>, inds: Set<com.capitol.app.analysis.IndicatorType>) {
+        val series = coroutineScope {
+            symbols.map { s -> async { runCatching { c.market.history(s, ChartRange.Y1) }.getOrNull() } }.awaitAll().filterNotNull()
+        }
+        _state.value = _state.value.copy(
+            watch = series.map { s -> QuoteSnapshot(s.symbol, s.name, s.regularMarketPrice, s.change, s.changePercent, s.currency, s.closes.takeLast(40)) },
+            signals = series.map { TechnicalAnalyzer.analyze(it, inds) }.sortedByDescending { it.compositeScore },
+        )
+    }
 
     fun selectHero(index: MarketIndex) {
         _state.value = _state.value.copy(heroIndex = index)
