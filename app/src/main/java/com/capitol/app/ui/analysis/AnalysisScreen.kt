@@ -110,8 +110,9 @@ fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onCompare: (St
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         SearchBar(st, vm)
-        if (st.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        LazyColumn(
+        if (st.symbol != null) com.capitol.app.ui.components.AutoRefreshDuringMarketHours { vm.refresh() }
+        androidx.compose.material3.pulltorefresh.PullToRefreshBox(isRefreshing = st.loading, onRefresh = { vm.refresh() }, modifier = Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), 
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -206,6 +207,7 @@ fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onCompare: (St
                     item(key = r.type.name) { Staggered(i) { IndicatorCard(r) } }
                 }
             }
+        }
         }
     }
 

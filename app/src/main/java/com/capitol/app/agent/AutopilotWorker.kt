@@ -21,6 +21,7 @@ import androidx.work.WorkerParameters
 import com.capitol.app.CapitolApp
 import com.capitol.app.MainActivity
 import com.capitol.app.R
+import com.capitol.app.analysis.AlertEvaluator
 import com.capitol.app.analysis.TechnicalAnalyzer
 import com.capitol.app.data.market.ChartRange
 import kotlinx.coroutines.flow.first
@@ -40,19 +41,34 @@ class AutopilotWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(
         val prefs = applicationContext.getSharedPreferences("autopilot_state", Context.MODE_PRIVATE)
         val changes = mutableListOf<String>()
 
-        for (item in c.watchlist.current()) {
-            val report = runCatching {
-                TechnicalAnalyzer.analyze(c.market.history(item.symbol, ChartRange.Y1, force = true), settings.defaultIndicators, settings.indicatorParams)
-            }.getOrNull() ?: continue
-            val prev = prefs.getString(item.symbol, null)
+        for (item in c.watchlist.all()) {
+            val series = runCatching { c.market.history(item.symbol, ChartRange.Y1, force = true) }.getOrNull() ?: continue
+            if (series.cachedAt != null) continue // offline copy — don't alert on stale data
+            val report = TechnicalAnalyzer.analyze(series, settings.defaultIndicators, settings.indicatorParams)
+            val sym = item.symbol
+
+            // Verdict changes
+            val prev = prefs.getString(sym, null)
             if (prev != null && prev != report.verdict.name) {
-                changes += "${item.symbol}: ${prev.replace('_', ' ').lowercase()} → ${report.verdict.label} (score ${"%+.2f".format(report.compositeScore)})"
+                changes += "$sym: ${prev.replace('_', ' ').lowercase()} → ${report.verdict.label} (score ${"%+.2f".format(report.compositeScore)})"
             }
-            prefs.edit().putString(item.symbol, report.verdict.name).apply()
-            item.alertAbove?.let { if (report.lastPrice >= it) changes += "${item.symbol} crossed above your alert $it (now ${"%.2f".format(report.lastPrice)})" }
-            item.alertBelow?.let { if (report.lastPrice <= it) changes += "${item.symbol} fell below your alert $it (now ${"%.2f".format(report.lastPrice)})" }
+            prefs.edit().putString(sym, report.verdict.name).apply()
+
+            // Price + indicator alerts, edge-triggered (notify once when a condition becomes true)
+            val states = mutableMapOf<String, Pair<Boolean, String>>()
+            item.alertAbove?.let { states["price>$it"] = (report.lastPrice >= it) to "$sym crossed above your alert $it (now ${"%.2f".format(report.lastPrice)})" }
+            item.alertBelow?.let { states["price<$it"] = (report.lastPrice <= it) to "$sym fell below your alert $it (now ${"%.2f".format(report.lastPrice)})" }
+            item.indicatorAlerts.forEach { a ->
+                AlertEvaluator.state(a, series, settings.indicatorParams, report.verdict)?.let { states[a.key] = it to "$sym: ${a.description}" }
+            }
+            val key = { k: String -> "alert|$sym|$k" }
+            val previous = states.keys.filter { prefs.contains(key(it)) }.associateWith { prefs.getBoolean(key(it), false) }
+            val fired = AlertEvaluator.fired(previous, states.mapValues { it.value.first })
+            fired.forEach { changes += states.getValue(it).second }
+            prefs.edit().apply { states.forEach { (k, v) -> putBoolean(key(k), v.first) } }.apply()
         }
 
+        com.capitol.app.widget.WatchlistWidget.refresh(applicationContext)
         if (changes.isNotEmpty()) {
             val body = c.agent.digest("Watchlist changes since last scan:\n" + changes.joinToString("\n"))
                 ?: changes.joinToString("\n")

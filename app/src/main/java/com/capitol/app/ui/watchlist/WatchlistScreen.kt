@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
@@ -83,6 +84,16 @@ class WatchlistViewModel(private val c: AppContainer) : ViewModel() {
     val state: StateFlow<WatchState> = _state.asStateFlow()
     private val cache = mutableMapOf<String, Pair<PriceSeries?, AnalysisReport?>>()
     val searchResults = MutableStateFlow<List<SymbolMatch>>(emptyList())
+    val lists = c.watchlist.data
+    val autopilotOn = c.settings.settings.map { it.agentAutoScan }
+
+    fun selectList(i: Int) = viewModelScope.launch { c.watchlist.setActive(i) }
+    fun createList(name: String) = viewModelScope.launch { c.watchlist.createList(name) }
+    fun renameList(i: Int, name: String) = viewModelScope.launch { c.watchlist.renameList(i, name) }
+    fun deleteList(i: Int) = viewModelScope.launch { c.watchlist.deleteList(i) }
+    fun setIndicatorAlerts(s: String, alerts: List<com.capitol.app.data.watchlist.IndicatorAlert>) =
+        viewModelScope.launch { c.watchlist.setIndicatorAlerts(s, alerts) }
+    fun enableAutopilot() = viewModelScope.launch { c.settings.setAgentAutoScan(true) }
 
     init {
         viewModelScope.launch {
@@ -136,6 +147,10 @@ fun WatchlistScreen(vm: WatchlistViewModel, onOpen: (String) -> Unit) {
     val st by vm.state.collectAsStateWithLifecycle()
     var adding by remember { mutableStateOf(false) }
     var alertFor by remember { mutableStateOf<WatchItem?>(null) }
+    val data by vm.lists.collectAsStateWithLifecycle(null)
+    val autopilotOn by vm.autopilotOn.collectAsStateWithLifecycle(false)
+    var listDialog by remember { mutableStateOf<Pair<Int?, String>?>(null) } // (index or null=new, name)
+    var listMenu by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -147,8 +162,28 @@ fun WatchlistScreen(vm: WatchlistViewModel, onOpen: (String) -> Unit) {
             IconButton({ vm.refresh() }) { Icon(Icons.Default.Refresh, "Refresh") }
             IconButton({ adding = true }) { Icon(Icons.Default.Add, "Add") }
         }
-        if (st.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        data?.let { d ->
+            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.foundation.lazy.LazyRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(d.lists.size) { i ->
+                        androidx.compose.material3.FilterChip(i == d.active, { vm.selectList(i) },
+                            { Text("${d.lists[i].name} (${d.lists[i].items.size})") })
+                    }
+                    item { androidx.compose.material3.AssistChip({ listDialog = (null to "") }, { Text("+ New list") }) }
+                }
+                Box {
+                    IconButton({ listMenu = true }) { Icon(Icons.Default.MoreVert, "List options") }
+                    androidx.compose.material3.DropdownMenu(listMenu, { listMenu = false }) {
+                        androidx.compose.material3.DropdownMenuItem({ Text("Rename \"${d.activeList.name}\"") }, { listMenu = false; listDialog = d.active to d.activeList.name })
+                        if (d.lists.size > 1) androidx.compose.material3.DropdownMenuItem({ Text("Delete \"${d.activeList.name}\"") }, { listMenu = false; vm.deleteList(d.active) })
+                    }
+                }
+            }
+        }
+        com.capitol.app.ui.components.AutoRefreshDuringMarketHours { vm.refresh() }
+        @OptIn(ExperimentalMaterial3Api::class)
+        androidx.compose.material3.pulltorefresh.PullToRefreshBox(isRefreshing = st.loading, onRefresh = { vm.refresh() }, modifier = Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (st.rows.isEmpty()) item {
                 CapitolCard { Text("Your watchlist is empty. Tap + to add symbols.") }
             }
@@ -164,10 +199,25 @@ fun WatchlistScreen(vm: WatchlistViewModel, onOpen: (String) -> Unit) {
                 }
             }
         }
+        }
     }
 
     if (adding) AddDialog(vm, onDismiss = { adding = false })
-    alertFor?.let { item -> AlertDialogFor(item, onDismiss = { alertFor = null }) { a, b -> vm.setAlerts(item.symbol, a, b); alertFor = null } }
+    alertFor?.let { item ->
+        AlertDialogFor(item, autopilotOn, onEnableAutopilot = vm::enableAutopilot, onDismiss = { alertFor = null }) { a, b, ind ->
+            vm.setAlerts(item.symbol, a, b); vm.setIndicatorAlerts(item.symbol, ind); alertFor = null
+        }
+    }
+    listDialog?.let { (idx, initial) ->
+        var name by remember(idx) { mutableStateOf(initial) }
+        AlertDialog(
+            onDismissRequest = { listDialog = null },
+            title = { Text(if (idx == null) "New watchlist" else "Rename watchlist") },
+            text = { OutlinedTextField(name, { name = it }, singleLine = true, placeholder = { Text("e.g. US stocks, Swing trades") }) },
+            confirmButton = { TextButton({ if (idx == null) vm.createList(name) else vm.renameList(idx, name); listDialog = null }) { Text("Save") } },
+            dismissButton = { TextButton({ listDialog = null }) { Text("Cancel") } },
+        )
+    }
 }
 
 @Composable
@@ -190,7 +240,8 @@ private fun WatchCard(row: WatchRow, onClick: () -> Unit, onAlert: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             row.report?.let { SignalChip(it.verdict) }
             Spacer(Modifier.weight(1f))
-            val alerts = listOfNotNull(row.item.alertAbove?.let { "≥ %.2f".format(it) }, row.item.alertBelow?.let { "≤ %.2f".format(it) })
+            val alerts = listOfNotNull(row.item.alertAbove?.let { "≥ %.2f".format(it) }, row.item.alertBelow?.let { "≤ %.2f".format(it) },
+                row.item.indicatorAlerts.size.takeIf { it > 0 }?.let { "$it indicator alert${if (it > 1) "s" else ""}" })
             if (alerts.isNotEmpty()) Text(alerts.joinToString("  "), style = MaterialTheme.typography.labelSmall, color = CapitolColors.market.neutral)
             IconButton(onAlert) { Icon(Icons.Default.NotificationsActive, "Price alert") }
         }
@@ -225,24 +276,78 @@ private fun AddDialog(vm: WatchlistViewModel, onDismiss: () -> Unit) {
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AlertDialogFor(item: WatchItem, onDismiss: () -> Unit, onSave: (Double?, Double?) -> Unit) {
+private fun AlertDialogFor(
+    item: WatchItem,
+    autopilotOn: Boolean,
+    onEnableAutopilot: () -> Unit,
+    onDismiss: () -> Unit,
+    onSave: (Double?, Double?, List<com.capitol.app.data.watchlist.IndicatorAlert>) -> Unit,
+) {
     var above by remember { mutableStateOf(item.alertAbove?.toString() ?: "") }
     var below by remember { mutableStateOf(item.alertBelow?.toString() ?: "") }
+    val alerts = remember { androidx.compose.runtime.mutableStateListOf(*item.indicatorAlerts.toTypedArray()) }
+    var cond by remember { mutableStateOf(com.capitol.app.data.watchlist.AlertCondition.RSI_BELOW) }
+    var value by remember { mutableStateOf("30") }
+    var menu by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Price alerts · ${item.symbol}") },
+        title = { Text("Alerts · ${item.symbol}") },
         text = {
-            Column {
-                Text("The AI autopilot checks these in the background (enable it in Settings).", style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(above, { above = it }, label = { Text("Alert when price ≥") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
-                OutlinedTextField(below, { below = it }, label = { Text("Alert when price ≤") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+            LazyColumn {
+                item {
+                    if (!autopilotOn) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Alerts need Autopilot running in the background.", style = MaterialTheme.typography.bodySmall,
+                                color = CapitolColors.market.neutral, modifier = Modifier.weight(1f))
+                            TextButton(onEnableAutopilot) { Text("Turn on") }
+                        }
+                    } else Text("Autopilot checks these in the background and notifies you once when each becomes true.",
+                        style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Price", style = MaterialTheme.typography.labelLarge)
+                    OutlinedTextField(above, { above = it }, label = { Text("Alert when price ≥") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                    OutlinedTextField(below, { below = it }, label = { Text("Alert when price ≤") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                    Spacer(Modifier.height(12.dp))
+                    Text("Indicators", style = MaterialTheme.typography.labelLarge)
+                }
+                items(alerts.toList()) { a ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("• ${a.description}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        IconButton({ alerts.remove(a) }) { Icon(Icons.Default.Delete, "Remove") }
+                    }
+                }
+                item {
+                    androidx.compose.material3.ExposedDropdownMenuBox(menu, { menu = it }) {
+                        OutlinedTextField(cond.label, {}, readOnly = true, label = { Text("Add condition") },
+                            modifier = Modifier.menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                            trailingIcon = { androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(menu) })
+                        ExposedDropdownMenu(menu, { menu = false }) {
+                            com.capitol.app.data.watchlist.AlertCondition.entries.forEach { c ->
+                                androidx.compose.material3.DropdownMenuItem({ Text(c.label) }, {
+                                    cond = c; menu = false
+                                    value = when (c) { com.capitol.app.data.watchlist.AlertCondition.RSI_BELOW -> "30"; com.capitol.app.data.watchlist.AlertCondition.RSI_ABOVE -> "70"; else -> "" }
+                                })
+                            }
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (cond.needsValue) OutlinedTextField(value, { value = it }, Modifier.weight(1f), label = { Text("Level") }, singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                        else Spacer(Modifier.weight(1f))
+                        TextButton({
+                            val v = if (cond.needsValue) value.toDoubleOrNull() ?: return@TextButton else null
+                            val a = com.capitol.app.data.watchlist.IndicatorAlert(cond, v)
+                            if (alerts.none { it.key == a.key }) alerts.add(a)
+                        }) { Text("Add") }
+                    }
+                }
             }
         },
-        confirmButton = { TextButton({ onSave(above.toDoubleOrNull(), below.toDoubleOrNull()) }) { Text("Save") } },
+        confirmButton = { TextButton({ onSave(above.toDoubleOrNull(), below.toDoubleOrNull(), alerts.toList()) }) { Text("Save") } },
         dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
     )
 }

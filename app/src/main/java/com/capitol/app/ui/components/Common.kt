@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.repeatOnLifecycle
 import com.capitol.app.analysis.Signal
 import com.capitol.app.ui.theme.CapitolColors
 import com.capitol.app.ui.theme.NumberStyle
@@ -156,6 +157,21 @@ private fun inline(s: String): AnnotatedString = buildAnnotatedString {
                 withStyle(SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)) { append(s.substring(i + 1, end)) }; i = end + 1
             }
             else -> { append(s[i]); i++ }
+        }
+    }
+}
+
+/** Calls [onTick] every [intervalMs] while the screen is visible and a market is open. */
+@Composable
+fun AutoRefreshDuringMarketHours(intervalMs: Long = 60_000, onTick: () -> Unit) {
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val tick = androidx.compose.runtime.rememberUpdatedState(onTick)
+    androidx.compose.runtime.LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            while (true) {
+                kotlinx.coroutines.delay(intervalMs)
+                if (com.capitol.app.data.market.MarketHours.anyOpen()) tick.value()
+            }
         }
     }
 }
