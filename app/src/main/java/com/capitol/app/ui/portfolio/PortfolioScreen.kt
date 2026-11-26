@@ -6,6 +6,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -56,6 +57,7 @@ import com.capitol.app.AppContainer
 import com.capitol.app.data.broker.CurrencyTotal
 import com.capitol.app.data.broker.Holding
 import com.capitol.app.data.broker.KiteConnectClient
+import com.capitol.app.data.mcp.IndMoneyMcp
 import com.capitol.app.data.prefs.SecretStore.Key
 import com.capitol.app.ui.components.AnimatedNumber
 import com.capitol.app.ui.components.CapitolCard
@@ -86,6 +88,23 @@ class PortfolioViewModel(val c: AppContainer) : ViewModel() {
     fun kiteLogout() { kite.logout(); refresh() }
     fun saveIndToken(token: String) { c.secrets.put(Key.INDMONEY_ACCESS_TOKEN, token); refresh() }
     fun indDisconnect() { ind.disconnect(); refresh() }
+
+    // INDmoney via its official MCP server (OAuth sign-in; used by the AI agent).
+    val mcp get() = c.indmoneyMcp
+    val mcpBusy = MutableStateFlow(false)
+    fun beginMcpLogin(onUrl: (String) -> Unit) = viewModelScope.launch {
+        mcpBusy.value = true
+        runCatching { mcp.beginLogin() }.onSuccess(onUrl).onFailure { message.value = it.message }
+        mcpBusy.value = false
+    }
+    fun completeMcpLogin(redirect: String) = viewModelScope.launch {
+        mcpBusy.value = true
+        runCatching { mcp.completeLogin(redirect); mcp.tools() }
+            .onSuccess { message.value = "Connected to INDmoney · the AI agent can now read your INDmoney portfolio (${it.size} tools)" }
+            .onFailure { message.value = it.message }
+        mcpBusy.value = false
+    }
+    fun mcpDisconnect() { mcp.disconnect(); message.value = "Disconnected INDmoney MCP" }
     fun importCsv(text: String, usStocks: Boolean) {
         val n = c.portfolio.importCsv(text, usStocks)
         message.value = if (n == 0) "No holdings found — the CSV needs symbol and quantity columns"
@@ -99,6 +118,7 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
     val msg by vm.message.collectAsStateWithLifecycle()
     val secretsV by vm.secretsVersion.collectAsStateWithLifecycle()
     var kiteLoginUrl by remember { mutableStateOf<String?>(null) }
+    var mcpLoginUrl by remember { mutableStateOf<String?>(null) }
     val ctx = LocalContext.current
     var csvIsUs by remember { mutableStateOf(false) }
     val csvPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -128,6 +148,7 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
         }
         item { SectionTitle("Connections") }
         item { secretsV.let { KiteCard(vm) { kiteLoginUrl = it } } }
+        item { secretsV.let { IndMoneyMcpCard(vm, onLogin = { mcpLoginUrl = it }, onAskAi = onAskAi) } }
         item { secretsV.let { IndMoneyCard(vm) } }
         item {
             CapitolCard {
@@ -151,6 +172,10 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
         }
     }
 
+    mcpLoginUrl?.let { url ->
+        OAuthWebDialog("Sign in to INDmoney", url, isRedirect = IndMoneyMcp::isRedirect,
+            onRedirect = { r -> mcpLoginUrl = null; vm.completeMcpLogin(r) }, onDismiss = { mcpLoginUrl = null })
+    }
     kiteLoginUrl?.let { url ->
         KiteLoginDialog(url, onToken = { token -> kiteLoginUrl = null; vm.completeKiteLogin(token) }, onDismiss = { kiteLoginUrl = null })
     }
@@ -223,6 +248,37 @@ private fun KiteCard(vm: PortfolioViewModel, onLogin: (String) -> Unit) {
 }
 
 @Composable
+private fun IndMoneyMcpCard(vm: PortfolioViewModel, onLogin: (String) -> Unit, onAskAi: (String) -> Unit) {
+    val busy by vm.mcpBusy.collectAsStateWithLifecycle()
+    CapitolCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("INDmoney (MCP) · recommended", style = MaterialTheme.typography.titleMedium)
+                Text("Includes US stocks · official INDmoney server", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (vm.mcp.isConnected) Icon(Icons.Default.CheckCircle, "Connected", tint = CapitolColors.market.bull)
+        }
+        Spacer(Modifier.height(4.dp))
+        if (vm.mcp.isConnected) {
+            Text("Connected. The AI agent can read your INDmoney portfolio — Indian and US stocks — and analyse it.",
+                style = MaterialTheme.typography.bodySmall)
+            Row {
+                Button({ onAskAi("Using my INDmoney account, list my holdings (including US stocks) and give a technical review of the biggest positions.") }) {
+                    Icon(Icons.Default.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text("Ask AI")
+                }
+                TextButton(vm::mcpDisconnect) { Text("Disconnect") }
+            }
+        } else {
+            Text("Sign in on INDmoney's own page — no token to copy, no static IP. Capitol stores the sign-in securely on this phone and never sends it to Claude.",
+                style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(8.dp))
+            Button({ vm.beginMcpLogin(onLogin) }, enabled = !busy) { Text(if (busy) "Connecting…" else "Connect with INDmoney") }
+        }
+    }
+}
+
+@Composable
 private fun IndMoneyCard(vm: PortfolioViewModel) {
     var token by remember { mutableStateOf("") }
     CapitolCard {
@@ -239,6 +295,37 @@ private fun IndMoneyCard(vm: PortfolioViewModel) {
                 visualTransformation = PasswordVisualTransformation())
             Spacer(Modifier.height(8.dp))
             Button({ vm.saveIndToken(token) }, enabled = token.isNotBlank()) { Text("Connect INDmoney") }
+        }
+    }
+}
+
+/** OAuth sign-in in a WebView; hands back the redirect URL once [isRedirect] matches. */
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun OAuthWebDialog(title: String, url: String, isRedirect: (String) -> Boolean, onRedirect: (String) -> Unit, onDismiss: () -> Unit) {
+    Dialog(onDismiss, DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                TextButton(onDismiss) { Text("Cancel") }
+            }
+            AndroidView(factory = { ctx ->
+                WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    webViewClient = object : WebViewClient() {
+                        private var handled = false
+                        private fun check(u: String?): Boolean {
+                            if (u == null || !isRedirect(u)) return false
+                            if (!handled) { handled = true; onRedirect(u) }
+                            return true
+                        }
+                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?) = check(request?.url?.toString())
+                        override fun onPageStarted(view: WebView?, u: String?, favicon: android.graphics.Bitmap?) { if (check(u)) view?.stopLoading() }
+                    }
+                    loadUrl(url)
+                }
+            }, modifier = Modifier.fillMaxSize())
         }
     }
 }

@@ -61,7 +61,7 @@ class CapitolAgent(
         return client!!
     }
 
-    private val toolDefs: List<Tool> by lazy {
+    private val baseToolDefs: List<Tool> by lazy {
         tools.specs.map { spec ->
             Tool.builder()
                 .name(spec.name)
@@ -80,7 +80,27 @@ class CapitolAgent(
         }
     }
 
-    private fun baseParams() = MessageCreateParams.builder()
+    /** INDmoney MCP tools (if connected) converted to Claude tool definitions. */
+    private suspend fun externalToolDefs(): List<Tool> = tools.externalTools().map { ext ->
+        val schema = ext.tool.inputSchema
+        val props = schema["properties"] as? JsonObject ?: JsonObject(emptyMap())
+        val required = (schema["required"] as? kotlinx.serialization.json.JsonArray)
+            ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }.orEmpty()
+        Tool.builder()
+            .name(ext.claudeName)
+            .description("[INDmoney account, read via INDmoney's official MCP server] " + ext.tool.description.ifBlank { ext.tool.name })
+            .inputSchema(
+                Tool.InputSchema.builder()
+                    .properties(Tool.InputSchema.Properties.builder().apply {
+                        props.forEach { (k, v) -> putAdditionalProperty(k, JsonValue.from(toPlain(v))) }
+                    }.build())
+                    .required(required)
+                    .build()
+            )
+            .build()
+    }
+
+    private fun baseParams(toolDefs: List<Tool>) = MessageCreateParams.builder()
         .model(MODEL)
         .maxTokens(16000L)
         .system(SYSTEM_PROMPT)
@@ -98,9 +118,10 @@ class CapitolAgent(
         val c = client()
         history += MessageParam.ofUser(userText)
         val checkpoint = history.size - 1
+        val toolDefs = baseToolDefs + externalToolDefs()
         try {
             repeat(MAX_TURNS) {
-                val response: Message = c.messages().create(baseParams().messages(history).build())
+                val response: Message = c.messages().create(baseParams(toolDefs).messages(history).build())
                 history += response.toParam()
 
                 when (response.stopReason().orElse(null)) {
@@ -174,7 +195,20 @@ class CapitolAgent(
             "add_to_watchlist" -> "Adding ${s("symbol")} to watchlist"
             "remove_from_watchlist" -> "Removing ${s("symbol")} from watchlist"
             "get_portfolio" -> "Reading your broker holdings"
-            else -> name
+            else -> if (name.startsWith(AgentTools.INDMONEY_PREFIX))
+                "Asking INDmoney: ${name.removePrefix(AgentTools.INDMONEY_PREFIX).replace('_', ' ')}" else name
+        }
+    }
+
+    /** kotlinx JSON → plain Kotlin values, for the SDK's JsonValue.from(). */
+    private fun toPlain(e: kotlinx.serialization.json.JsonElement): Any? = when (e) {
+        is JsonObject -> e.mapValues { toPlain(it.value) }
+        is kotlinx.serialization.json.JsonArray -> e.map { toPlain(it) }
+        is kotlinx.serialization.json.JsonNull -> null
+        is kotlinx.serialization.json.JsonPrimitive -> when {
+            e.isString -> e.content
+            e.content == "true" || e.content == "false" -> e.content.toBoolean()
+            else -> e.content.toLongOrNull() ?: e.content.toDoubleOrNull() ?: e.content
         }
     }
 
@@ -193,6 +227,7 @@ class CapitolAgent(
             - If the user gives a company name rather than a ticker, call search_symbol first. Indian stocks use .NS (NSE) or .BO (BSE) suffixes.
             - When the user picks specific indicators, explain the result through those indicators specifically: what each one measures, what its current value says, and how they agree or conflict.
             - For portfolio or watchlist questions, use get_portfolio / scan_watchlist, then analyse the most relevant names.
+            - Tools whose names start with indmoney__ read the user's INDmoney account (including US stocks) through INDmoney's official MCP server. Use them for INDmoney holdings questions; US tickers have no suffix (e.g. AAPL) when you pass them to run_technical_analysis.
             - Only modify the watchlist when the user explicitly asks.
 
             How to answer:

@@ -57,6 +57,10 @@ class MainActivity : ComponentActivity() {
     /** Handles capitol://kite-callback?request_token=... if Kite redirects via the browser. */
     private fun handleDeepLink(intent: Intent?) {
         val data = intent?.data?.toString() ?: return
+        if (com.capitol.app.data.mcp.IndMoneyMcp.isRedirect(data)) {
+            lifecycleScope.launch { runCatching { container.indmoneyMcp.completeLogin(data) } }
+            return
+        }
         val token = KiteConnectClient.requestTokenFrom(data) ?: return
         lifecycleScope.launch {
             runCatching { container.portfolio.kite.createSession(token) }

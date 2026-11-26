@@ -80,6 +80,9 @@ Requirements: JDK 17+ and the Android SDK (platform 36).
 > The token exchange needs your Kite **API secret**. Capitol keeps it encrypted on the device. If you'd rather keep the secret off the phone, run the exchange on your own server.
 
 ### INDmoney
+**Recommended: INDmoney MCP (includes US stocks).** In *Portfolio → INDmoney (MCP)* tap **Connect with INDmoney** and sign in on INDmoney's own page. Capitol connects to INDmoney's official MCP server (`https://mcp.indmoney.com/mcp`) using standard MCP OAuth: discovery, dynamic client registration and PKCE. The AI agent can then read your INDmoney portfolio, Indian and US stocks, through the server's tools. Tokens are stored encrypted on the phone, refreshed automatically, and sent only to INDmoney, never to Claude.
+
+**Alternative: INDstocks API token.**
 Generate a token at indstocks.com → API → *Generate Token* and paste it in *Portfolio → INDmoney*. Tokens are short-lived. If you set a static IP for the token, requests must come from that IP. Without API access, export your holdings and use **Import holdings CSV**.
 
 ### Releases and in-app updates

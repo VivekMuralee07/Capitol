@@ -8,6 +8,7 @@ import com.capitol.app.agent.CapitolAgent
 import com.capitol.app.data.broker.IndMoneyClient
 import com.capitol.app.data.broker.KiteConnectClient
 import com.capitol.app.data.broker.PortfolioRepository
+import com.capitol.app.data.mcp.IndMoneyMcp
 import com.capitol.app.data.market.MarketRepository
 import com.capitol.app.data.market.YFinanceBackendDataSource
 import com.capitol.app.data.market.YahooFinanceDataSource
@@ -45,7 +46,8 @@ class AppContainer(context: Context) {
         settings,
     )
     val portfolio = PortfolioRepository(KiteConnectClient(http, secrets), IndMoneyClient(http, secrets))
-    val agentTools = AgentTools(market, watchlist, portfolio)
+    val indmoneyMcp = IndMoneyMcp(http, secrets)
+    val agentTools = AgentTools(market, watchlist, portfolio, indmoneyMcp)
     val agent = CapitolAgent(secrets, agentTools)
     val updates = UpdateManager(context, http)
 }
