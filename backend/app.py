@@ -53,12 +53,19 @@ def history(
     symbol: str = Query(..., min_length=1, max_length=32),
     period: str = "1y",
     interval: str = "1d",
+    days: int | None = Query(None, ge=1, le=3650),
 ) -> dict[str, Any]:
-    if period not in VALID_PERIODS or interval not in VALID_INTERVALS:
+    """Price history by yfinance period, or by a calendar-day lookback (`days`, e.g. 7 or 1095)."""
+    if (days is None and period not in VALID_PERIODS) or interval not in VALID_INTERVALS:
         raise HTTPException(400, "invalid period or interval")
     symbol = symbol.strip().upper()
     ticker = yf.Ticker(symbol)
-    df = ticker.history(period=period, interval=interval, auto_adjust=False)
+    if days is not None:
+        from datetime import datetime, timedelta, timezone
+        start = datetime.now(timezone.utc) - timedelta(days=days)
+        df = ticker.history(start=start, interval=interval, auto_adjust=False)
+    else:
+        df = ticker.history(period=period, interval=interval, auto_adjust=False)
     if df is None or df.empty:
         raise HTTPException(404, f"no data for {symbol}")
 

@@ -46,7 +46,7 @@ Capitol is a native **Kotlin / Jetpack Compose** Android app. It pulls market da
 - **Share or export** an analysis as an image, PDF or text.
 - **App lock** with fingerprint, face or screen lock (*Settings → Security*).
 ![](app/screenshots/report_example.png)
-- **Live market updates**: prices stream from Yahoo Finance's live feed (the same one yfinance's `WebSocket` uses). This covers the home hero chart (1D live mode), index cards, watchlist movers and the Analyze chart, with prices that flash green or red on each tick and a LIVE / DELAYED / MARKET CLOSED badge. If the stream is unavailable, Capitol falls back to refreshing quotes every 15 seconds. Live updates pause when the screen isn't visible.
+- **Live market updates**: prices stream from Yahoo Finance's live feed (the same one yfinance's `WebSocket` uses). Live updates change prices and day changes only (home hero price, index cards, ticker, movers and the Analyze price header), and prices flash green or red on each tick. Charts aren't redrawn by ticks; they offer 1D, 5D, 1W, 1M, 3M, 6M, 1Y, 3Y and 5Y views and a LIVE / DELAYED / MARKET CLOSED badge. If the stream is unavailable, Capitol falls back to refreshing quotes every 15 seconds. Live updates pause when the screen isn't visible.
 - **Today's top movers**: the top 5 gainers and losers of the day in NIFTY 50 or US large caps, updating live.
 - **Dark and light mode**: System / Light / Dark setting, a quick toggle on the home page, and optional Material You colours on Android 12+.
 

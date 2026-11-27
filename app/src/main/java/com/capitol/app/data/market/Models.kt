@@ -53,15 +53,34 @@ data class QuoteSnapshot(
  * Period / interval pairs mirror the values accepted by yfinance's
  * `Ticker.history(period=..., interval=...)`.
  */
-enum class ChartRange(val label: String, val period: String, val interval: String) {
+enum class ChartRange(
+    val label: String,
+    val period: String,
+    val interval: String,
+    /**
+     * Calendar-day lookback for windows Yahoo's `range` parameter doesn't offer (1 week,
+     * 3 years); fetched with explicit start/end dates instead, like yfinance's `start=`.
+     */
+    val days: Int? = null,
+    /** Shown in the chart range pickers (2Y is used internally, e.g. by the backtester). */
+    val inPicker: Boolean = true,
+) {
     D1("1D", "1d", "5m"),
-    W1("1W", "5d", "30m"),
-    M1("1M", "1mo", "1d"),
+    D5("5D", "5d", "15m"),
+    W1("1W", "7d", "30m", days = 7),
+    M1("1M", "1mo", "1h"),
     M3("3M", "3mo", "1d"),
     M6("6M", "6mo", "1d"),
     Y1("1Y", "1y", "1d"),
-    Y2("2Y", "2y", "1d"),
+    Y2("2Y", "2y", "1d", inPicker = false),
+    Y3("3Y", "3y", "1d", days = 3 * 365),
     Y5("5Y", "5y", "1wk"),
+    ;
+
+    companion object {
+        /** The ranges offered on charts: 1D 5D 1W 1M 3M 6M 1Y 3Y 5Y. */
+        val PICKER: List<ChartRange> get() = entries.filter { it.inPicker }
+    }
 }
 
 fun PriceSeries.toSnapshot() = QuoteSnapshot(

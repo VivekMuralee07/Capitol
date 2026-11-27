@@ -6,7 +6,6 @@ import com.capitol.app.AppContainer
 import com.capitol.app.analysis.AnalysisReport
 import com.capitol.app.analysis.TechnicalAnalyzer
 import com.capitol.app.data.market.ChartRange
-import com.capitol.app.data.market.isIntraday
 import com.capitol.app.data.market.PriceSeries
 import com.capitol.app.data.market.QuoteSnapshot
 import kotlinx.coroutines.async
@@ -32,8 +31,10 @@ data class HomeState(
     val watch: List<QuoteSnapshot> = emptyList(),
     val signals: List<AnalysisReport> = emptyList(),
     val error: String? = null,
-    /** Hero chart window: 1D (live, 5-minute bars) or 3M (daily). */
+    /** Hero chart window (charts aren't modified by live ticks; only prices are). */
     val heroRange: ChartRange = ChartRange.D1,
+    /** Live price for the hero symbol, shown in the hero header. */
+    val heroQuote: com.capitol.app.data.live.LiveQuote? = null,
     val moversUniverse: com.capitol.app.analysis.Universe = com.capitol.app.analysis.Universe.NIFTY50,
     val gainers: List<com.capitol.app.data.live.LiveQuote> = emptyList(),
     val losers: List<com.capitol.app.data.live.LiveQuote> = emptyList(),
@@ -100,9 +101,7 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     private fun loadHero(force: Boolean = false) = viewModelScope.launch {
         val st = _state.value
         runCatching { c.market.history(st.heroIndex.symbol, st.heroRange, force) }.onSuccess { s ->
-            // Apply the latest live tick straight away so the chart doesn't jump back.
-            val q = c.live.quotes.value[s.symbol]
-            _state.value = _state.value.copy(hero = q?.let { com.capitol.app.data.live.LiveCandles.merge(s, it, bucket(st.heroRange)) } ?: s)
+            _state.value = _state.value.copy(hero = s, heroQuote = c.live.quotes.value[s.symbol])
         }
     }
 
@@ -120,16 +119,13 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
         c.live.watch(OWNER, INDICES.map { it.symbol } + st.heroIndex.symbol + st.watch.map { it.symbol } + moverSymbols())
     }
 
-    private fun bucket(r: ChartRange) = if (r.isIntraday) 300L else 86_400L
-
     private fun applyLive(quotes: Map<String, com.capitol.app.data.live.LiveQuote>) {
         if (quotes.isEmpty()) return
         val st = _state.value
-        val hero = st.hero?.let { h -> quotes[h.symbol]?.let { com.capitol.app.data.live.LiveCandles.merge(h, it, bucket(st.heroRange)) } ?: h }
         val (g, l) = com.capitol.app.data.live.LiveCandles.movers(quotes, moverSymbols())
         val relevant = (INDICES.map { it.symbol } + st.heroIndex.symbol + st.watch.map { it.symbol } + moverSymbols()).mapNotNull { quotes[it] }
         _state.value = st.copy(
-            hero = hero,
+            heroQuote = quotes[st.heroIndex.symbol] ?: st.heroQuote,
             indices = st.indices.map { (i, snap) -> i to (quotes[snap.symbol]?.let { com.capitol.app.data.live.LiveCandles.apply(snap, it) } ?: snap) },
             watch = st.watch.map { snap -> quotes[snap.symbol]?.let { com.capitol.app.data.live.LiveCandles.apply(snap, it) } ?: snap },
             gainers = g, losers = l,

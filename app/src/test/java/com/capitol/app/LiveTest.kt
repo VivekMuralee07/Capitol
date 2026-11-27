@@ -5,12 +5,10 @@ import com.capitol.app.data.live.LiveQuote
 import com.capitol.app.data.live.LiveQuotes
 import com.capitol.app.data.live.PricingDecoder
 import com.capitol.app.data.live.YahooStreamer
-import com.capitol.app.data.market.Candle
 import com.capitol.app.data.market.ChartRange
 import com.capitol.app.data.market.Fundamentals
 import com.capitol.app.data.market.MarketDataSource
 import com.capitol.app.data.market.NewsItem
-import com.capitol.app.data.market.PriceSeries
 import com.capitol.app.data.market.QuoteSnapshot
 import com.capitol.app.data.market.SymbolMatch
 import com.capitol.app.data.market.YahooFinanceDataSource
@@ -29,7 +27,6 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.LinkedBlockingQueue
@@ -89,24 +86,27 @@ class LiveTest {
         }
     }
 
-    private fun series(times: List<Long>, closes: List<Double>) = PriceSeries("^NSEI", "NIFTY", "INR", "NSE",
-        times.zip(closes).map { (t, c) -> Candle(t, c, c, c, c, 0.0) }, closes.last(), 100.0)
-
-    @Test fun liveCandleMerging() {
-        val base = 1_764_230_400L // aligned to 300 s
-        val s = series(listOf(base, base + 300), listOf(100.0, 101.0))
-        // Same 5-minute bucket → updates the last candle.
-        val a = LiveCandles.merge(s, LiveQuote("^NSEI", 103.0, 3.0, 3.0, time = (base + 420) * 1000), 300)
-        assertEquals(2, a.candles.size); assertEquals(103.0, a.candles.last().close, 0.0); assertEquals(103.0, a.candles.last().high, 0.0)
-        assertEquals(103.0, a.regularMarketPrice, 0.0); assertEquals(100.0, a.previousClose, 1e-9)
-        // Next bucket → appends.
-        val b = LiveCandles.merge(a, LiveQuote("^NSEI", 99.0, -1.0, -1.0, time = (base + 610) * 1000), 300)
-        assertEquals(3, b.candles.size); assertEquals(base + 600, b.candles.last().time); assertEquals(103.0, b.candles.last().open, 0.0)
-        // Older tick or other symbol → unchanged.
-        assertSame(b, LiveCandles.merge(b, LiveQuote("^NSEI", 50.0, 0.0, 0.0, time = base * 1000), 300))
-        assertSame(b, LiveCandles.merge(b, LiveQuote("TCS.NS", 50.0, 0.0, 0.0, time = (base + 900) * 1000), 300))
-        // Weekly: Long.MAX bucket keeps updating the latest bar.
-        assertEquals(3, LiveCandles.merge(b, LiveQuote("^NSEI", 98.0, 0.0, 0.0, time = (base + 99_999) * 1000), Long.MAX_VALUE).candles.size)
+    @Test fun chartRangesOfferedAndCustomWindowsUseDates() {
+        assertEquals(listOf("1D", "5D", "1W", "1M", "3M", "6M", "1Y", "3Y", "5Y"), ChartRange.PICKER.map { it.label })
+        MockWebServer().use { server ->
+            val chart = """{"chart":{"result":[{"meta":{"symbol":"TCS.NS","currency":"INR","regularMarketPrice":12.0},
+                "timestamp":[1700000000,1700086400],"indicators":{"quote":[{"open":[10,11],"high":[10,11],"low":[10,11],"close":[10,12],"volume":[1,1]}]}}],"error":null}}"""
+            repeat(3) { server.enqueue(MockResponse().setBody(chart)) }
+            val yahoo = YahooFinanceDataSource(OkHttpClient(), server.url("").toString().trimEnd('/'))
+            runBlocking {
+                yahoo.history("TCS.NS", ChartRange.W1)
+                yahoo.history("TCS.NS", ChartRange.Y3)
+                yahoo.history("TCS.NS", ChartRange.D5)
+            }
+            val w = server.takeRequest().requestUrl!!
+            assertNull(w.queryParameter("range"))
+            val span = w.queryParameter("period2")!!.toLong() - w.queryParameter("period1")!!.toLong()
+            assertEquals(7 * 86_400L, span); assertEquals("30m", w.queryParameter("interval"))
+            val y = server.takeRequest().requestUrl!!
+            assertEquals(3 * 365 * 86_400L, y.queryParameter("period2")!!.toLong() - y.queryParameter("period1")!!.toLong())
+            val d = server.takeRequest().requestUrl!!
+            assertEquals("5d", d.queryParameter("range")); assertNull(d.queryParameter("period1"))
+        }
     }
 
     @Test fun snapshotsAndMovers() {

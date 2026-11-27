@@ -38,7 +38,15 @@ class YahooFinanceDataSource(
 
     override suspend fun history(symbol: String, range: ChartRange): PriceSeries = withContext(Dispatchers.IO) {
         val url = "$base/v8/finance/chart/${symbol.trim().uppercase()}".toHttpUrl().newBuilder()
-            .addQueryParameter("range", range.period)
+            .apply {
+                val days = range.days
+                if (days == null) addQueryParameter("range", range.period)
+                else {
+                    val now = System.currentTimeMillis() / 1000
+                    addQueryParameter("period1", (now - days * 86_400L).toString())
+                    addQueryParameter("period2", now.toString())
+                }
+            }
             .addQueryParameter("interval", range.interval)
             .addQueryParameter("includePrePost", "false")
             .addQueryParameter("events", "div,splits")

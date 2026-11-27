@@ -142,8 +142,9 @@ fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onCompare: (St
                         Text(series.name, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text("${series.symbol} · ${series.exchange} · ${series.currency}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(4.dp))
-                        com.capitol.app.ui.components.FlashingPrice(series.regularMarketPrice, fontSize = 28)
-                        ChangeText(series.change, series.changePercent)
+                        val q = st.liveQuote
+                        com.capitol.app.ui.components.FlashingPrice(q?.price ?: series.regularMarketPrice, fontSize = 28)
+                        if (q != null) ChangeText(q.change, q.changePercent) else ChangeText(series.change, series.changePercent)
                         com.capitol.app.ui.components.LiveBadge(st.streaming, st.lastTick,
                             if (series.symbol.endsWith(".NS") || series.symbol.endsWith(".BO") || series.symbol.startsWith("^NSE") || series.symbol == "^BSESN")
                                 com.capitol.app.data.market.MarketHours.indiaOpen()
@@ -160,7 +161,7 @@ fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onCompare: (St
             }
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(ChartRange.entries) { r -> FilterChip(r == st.range, { vm.setRange(r) }, { Text(r.label) }) }
+                    items(ChartRange.PICKER) { r -> FilterChip(r == st.range, { vm.setRange(r) }, { Text(r.label) }) }
                     item {
                         IconButton({ chartMode = if (chartMode == PriceChartMode.CANDLES) PriceChartMode.LINE else PriceChartMode.CANDLES }) {
                             Icon(if (chartMode == PriceChartMode.CANDLES) Icons.AutoMirrored.Filled.ShowChart else Icons.Default.CandlestickChart, "Chart type")
