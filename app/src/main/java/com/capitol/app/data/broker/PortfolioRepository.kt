@@ -11,7 +11,11 @@ data class PortfolioState(
     val errors: List<String> = emptyList(),
     val loading: Boolean = false,
     val updatedAt: Long? = null,
+    /** Credit card bills from INDmoney (read-only). */
+    val cards: List<CreditCardBill> = emptyList(),
 ) {
+    val totalCardDue get() = cards.sumOf { it.totalDue }
+
     /** Totals per currency — INR and USD holdings are never summed together. */
     val totalsByCurrency: List<CurrencyTotal> get() = holdings.groupBy { it.currency }.map { (ccy, hs) ->
         CurrencyTotal(ccy, hs.sumOf { it.invested }, hs.sumOf { it.current })
@@ -59,13 +63,16 @@ class PortfolioRepository(
                 else -> Result.success(emptyList())
             }
         }
+        val cc = async { if (indmoneyMcp?.isConnected == true) runCatching { indmoneyMcp.creditCards() } else Result.success(emptyList()) }
         val kr = k.await(); val ir = i.await(); val mr = mf.await()
+        val cr = cc.await().onFailure { com.capitol.app.diagnostics.Diagnostics.error("Broker", "credit cards: ${it.message}", it) }
         listOfNotNull(kr.exceptionOrNull(), ir.exceptionOrNull(), mr.exceptionOrNull()).forEach { com.capitol.app.diagnostics.Diagnostics.error("Broker", it.message ?: "error", it) }
         _state.value = PortfolioState(
             holdings = kr.getOrDefault(emptyList()) + mr.getOrDefault(emptyList()) + ir.getOrDefault(emptyList()) + imported,
             errors = listOfNotNull(kr.exceptionOrNull()?.message, ir.exceptionOrNull()?.message, mr.exceptionOrNull()?.message?.let { "Mutual funds: $it" }),
             loading = false,
             updatedAt = System.currentTimeMillis(),
+            cards = cr.getOrDefault(emptyList()).sortedWith(compareBy(nullsLast()) { it.dueDate }),
         )
     }
 
