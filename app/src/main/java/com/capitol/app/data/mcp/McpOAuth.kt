@@ -36,7 +36,7 @@ data class McpAuthConfig(
 @Serializable
 data class McpTokens(val accessToken: String, val refreshToken: String?, val expiresAtMillis: Long?)
 
-class McpAuthException(message: String) : Exception(message)
+class McpAuthException(message: String, val redirectRejected: Boolean = false) : Exception(message)
 
 /**
  * OAuth 2.1 client for remote MCP servers, following the MCP authorization spec:
@@ -99,7 +99,8 @@ class McpOAuth(private val http: OkHttpClient) {
             .post(json.encodeToString(body).toRequestBody("application/json".toMediaType())).build()
         http.newCall(req).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) throw McpAuthException("App registration was refused by INDmoney (HTTP ${resp.code}): ${text.take(200)}")
+            if (!resp.isSuccessful) throw McpAuthException("App registration was refused (HTTP ${resp.code}): ${text.take(200)}",
+                redirectRejected = text.contains("invalid_redirect_uri"))
             val o = json.parseToJsonElement(text).jsonObject
             (o["client_id"]?.str() ?: throw McpAuthException("Registration returned no client_id")) to o["client_secret"]?.str()
         }
