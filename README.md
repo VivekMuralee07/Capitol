@@ -97,6 +97,9 @@ Requirements: JDK 17+ and the Android SDK (platform 36).
 
 > The token exchange needs your Kite **API secret**. Capitol keeps it encrypted on the device. If you'd rather keep the secret off the phone, run the exchange on your own server.
 
+### Zerodha via Kite MCP (stocks + Coin mutual funds, no API key)
+*Portfolio → Zerodha via Kite MCP → Connect*. This logs in to Kite through Zerodha's official hosted MCP server (`https://mcp.kite.trade/mcp`). It needs no Kite developer app or API key. Capitol then reads your stock holdings and **Coin mutual funds** (`get_mf_holdings`), shows them in the Portfolio tab and analytics, and lets the AI agent use Kite's read-only tools. Capitol never exposes order tools. Kite logins last a day; reconnect when asked. If you use the Kite Connect API instead, mutual funds come from its `/mf/holdings` endpoint.
+
 ### INDmoney
 **Recommended: INDmoney MCP (includes US stocks).** In *Portfolio → INDmoney (MCP)* tap **Connect with INDmoney** and sign in on INDmoney's own page. Capitol connects to INDmoney's official MCP server (`https://mcp.indmoney.com/mcp`) using standard MCP OAuth: discovery, dynamic client registration and PKCE. The AI agent can then read your INDmoney portfolio, Indian and US stocks, through the server's tools. Tokens are stored encrypted on the phone, refreshed automatically, and sent only to INDmoney, never to Claude.
 

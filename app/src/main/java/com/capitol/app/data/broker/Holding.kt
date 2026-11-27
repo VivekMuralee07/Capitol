@@ -1,6 +1,8 @@
 package com.capitol.app.data.broker
 
-enum class Broker(val label: String) { KITE("Zerodha Kite"), INDMONEY("INDmoney") }
+enum class Broker(val label: String) { KITE("Zerodha Kite"), INDMONEY("INDmoney"), COIN("Zerodha Coin") }
+
+enum class AssetKind { EQUITY, MUTUAL_FUND }
 
 data class Holding(
     val broker: Broker,
@@ -10,7 +12,12 @@ data class Holding(
     val averagePrice: Double,
     val lastPrice: Double,
     val dayChangePercent: Double?,
+    val kind: AssetKind = AssetKind.EQUITY,
+    /** Full scheme name for mutual funds (tradingSymbol is the ISIN). */
+    val displayName: String? = null,
+    val folio: String? = null,
 ) {
+    val isMutualFund get() = kind == AssetKind.MUTUAL_FUND
     val invested get() = quantity * averagePrice
     val current get() = quantity * lastPrice
     val pnl get() = current - invested

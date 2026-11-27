@@ -30,15 +30,28 @@ class McpClient(
     private val http: OkHttpClient,
     private val url: String,
     private val token: suspend () -> String?,
+    /**
+     * Optional persistence for the `Mcp-Session-Id`, for servers (like Kite MCP) whose login is
+     * bound to the MCP session rather than to an OAuth token.
+     */
+    private val sessionStore: SessionStore? = null,
 ) {
+    interface SessionStore { fun load(): String?; fun save(id: String?) }
+
     private val json = Json { ignoreUnknownKeys = true }
     private val ids = AtomicInteger(1)
-    private var sessionId: String? = null
-    private var initialized = false
+    private var sessionId: String? = sessionStore?.load()
+    /** A restored session was initialized in an earlier app run. */
+    private var initialized = sessionId != null
+
+    /** True when the server dropped our session (HTTP 404) — login state bound to it is gone. */
+    @Volatile var sessionLost = false
+        private set
     private var protocolVersion = PROTOCOL_VERSION
 
     private suspend fun ensureInitialized() {
         if (initialized) return
+        sessionLost = false
         val result = rpc("initialize", buildJsonObject {
             put("protocolVersion", PROTOCOL_VERSION)
             put("capabilities", JsonObject(emptyMap()))
@@ -81,7 +94,7 @@ class McpClient(
         return text
     }
 
-    fun reset() { initialized = false; sessionId = null }
+    fun reset() { initialized = false; sessionId = null; sessionStore?.save(null) }
 
     private suspend fun notify(method: String) {
         post(buildJsonObject { put("jsonrpc", "2.0"); put("method", method) }, expectResponse = false)
@@ -109,8 +122,8 @@ class McpClient(
                 .build()
             http.newCall(req).execute().use { resp ->
                 if (resp.code == 401 || resp.code == 403) throw McpException("INDmoney session expired — please reconnect.", unauthorized = true)
-                if (resp.code == 404 && sessionId != null) { reset(); throw McpException("MCP session expired, please retry") }
-                resp.header("Mcp-Session-Id")?.let { sessionId = it }
+                if (resp.code == 404 && sessionId != null) { reset(); sessionLost = true; throw McpException("MCP session expired, please retry") }
+                resp.header("Mcp-Session-Id")?.let { if (it != sessionId) { sessionId = it; sessionStore?.save(it) } }
                 if (!expectResponse) return@withContext null
                 if (!resp.isSuccessful) throw McpException("INDmoney MCP HTTP ${resp.code}")
                 val body = resp.body?.string().orEmpty()

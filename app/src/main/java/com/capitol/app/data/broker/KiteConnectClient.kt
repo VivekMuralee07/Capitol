@@ -24,7 +24,7 @@ import java.security.MessageDigest
  * 2. Kite redirects to your app's redirect URL with `request_token=...`.
  * 3. [createSession] exchanges it for an access token (valid until ~6 AM next day).
  */
-class KiteConnectClient(private val http: OkHttpClient, private val secrets: SecretStore) {
+class KiteConnectClient(private val http: OkHttpClient, private val secrets: SecretStore, private val base: String = BASE) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -41,7 +41,7 @@ class KiteConnectClient(private val http: OkHttpClient, private val secrets: Sec
         val key = secrets.get(Key.KITE_API_KEY) ?: throw BrokerException("Missing Kite API key")
         val secret = secrets.get(Key.KITE_API_SECRET) ?: throw BrokerException("Missing Kite API secret")
         val checksum = sha256(key + requestToken + secret)
-        val req = Request.Builder().url("$BASE/session/token")
+        val req = Request.Builder().url("$base/session/token")
             .header("X-Kite-Version", "3")
             .post(FormBody.Builder().add("api_key", key).add("request_token", requestToken).add("checksum", checksum).build())
             .build()
@@ -79,6 +79,11 @@ class KiteConnectClient(private val http: OkHttpClient, private val secrets: Sec
         }
     }
 
+    /** Zerodha Coin mutual-fund holdings (`GET /mf/holdings`). */
+    suspend fun mfHoldings(): List<Holding> = withContext(Dispatchers.IO) {
+        (call(authed("/mf/holdings")) as? JsonArray)?.let { MutualFunds.parse(it) } ?: emptyList()
+    }
+
     /** Available equity cash, if the margins endpoint returns it. */
     suspend fun availableCash(): Double? = withContext(Dispatchers.IO) {
         val eq = (call(authed("/user/margins")) as? JsonObject)?.get("equity") as? JsonObject
@@ -88,7 +93,7 @@ class KiteConnectClient(private val http: OkHttpClient, private val secrets: Sec
     private fun authed(path: String): Request {
         val key = secrets.get(Key.KITE_API_KEY) ?: throw BrokerException("Missing Kite API key")
         val token = secrets.get(Key.KITE_ACCESS_TOKEN) ?: throw BrokerException("Not logged in to Kite")
-        return Request.Builder().url("$BASE$path")
+        return Request.Builder().url("$base$path")
             .header("X-Kite-Version", "3")
             .header("Authorization", "token $key:$token")
             .build()

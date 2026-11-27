@@ -57,6 +57,7 @@ import androidx.lifecycle.viewModelScope
 import com.capitol.app.AppContainer
 import com.capitol.app.data.broker.CurrencyTotal
 import com.capitol.app.data.broker.Holding
+import com.capitol.app.analysis.shortLabel
 import com.capitol.app.data.broker.KiteConnectClient
 import com.capitol.app.data.mcp.IndMoneyMcp
 import com.capitol.app.data.prefs.SecretStore.Key
@@ -126,6 +127,24 @@ class PortfolioViewModel(val c: AppContainer) : ViewModel() {
         mcpBusy.value = false
     }
     fun mcpDisconnect() { mcp.disconnect(); message.value = "Disconnected INDmoney MCP" }
+
+    // Zerodha via Kite MCP (login tool; no API key needed). Includes Coin mutual funds.
+    val kiteMcp get() = c.kiteMcp
+    val kiteMcpBusy = MutableStateFlow(false)
+    fun beginKiteMcpLogin(onUrl: (String) -> Unit) = viewModelScope.launch {
+        kiteMcpBusy.value = true
+        runCatching { kiteMcp.beginLogin() }.onSuccess(onUrl)
+            .onFailure { com.capitol.app.diagnostics.Diagnostics.error("KiteMCP", it.message ?: "error", it); message.value = it.message }
+        kiteMcpBusy.value = false
+    }
+    fun completeKiteMcpLogin() = viewModelScope.launch {
+        kiteMcpBusy.value = true
+        runCatching { kiteMcp.completeLogin() }
+            .onSuccess { message.value = "Connected to Zerodha via Kite MCP — loading stocks and Coin mutual funds"; refresh() }
+            .onFailure { message.value = it.message }
+        kiteMcpBusy.value = false
+    }
+    fun kiteMcpDisconnect() { kiteMcp.disconnect(); message.value = "Disconnected Kite MCP"; refresh() }
     fun importCsv(text: String, usStocks: Boolean) {
         val n = c.portfolio.importCsv(text, usStocks)
         message.value = if (n == 0) "No holdings found — the CSV needs symbol and quantity columns"
@@ -140,6 +159,7 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
     val secretsV by vm.secretsVersion.collectAsStateWithLifecycle()
     var kiteLoginUrl by remember { mutableStateOf<String?>(null) }
     var mcpLoginUrl by remember { mutableStateOf<String?>(null) }
+    var kiteMcpUrl by remember { mutableStateOf<String?>(null) }
     val ctx = LocalContext.current
     var csvIsUs by remember { mutableStateOf(false) }
     val csvPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -171,9 +191,10 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
                 if (loading && analytics.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
                 analytics.forEach { a -> AnalyticsCard(a); Spacer(Modifier.height(12.dp)) }
             }
-            items(st.holdings, key = { it.broker.name + it.tradingSymbol + it.exchange }) { h -> HoldingRow(h) { onAnalyze(h.yahooSymbol) } }
+            items(st.holdings, key = { it.broker.name + it.tradingSymbol + it.exchange + (it.folio ?: "") }) { h -> HoldingRow(h) { onAnalyze(h.yahooSymbol) } }
         }
         item { SectionTitle("Connections") }
+        item { secretsV.let { KiteMcpCard(vm, onLogin = { kiteMcpUrl = it }, onAskAi = onAskAi) } }
         item { secretsV.let { KiteCard(vm) { kiteLoginUrl = it } } }
         item { secretsV.let { IndMoneyMcpCard(vm, onLogin = { mcpLoginUrl = it }, onAskAi = onAskAi) } }
         item { secretsV.let { IndMoneyCard(vm) } }
@@ -199,6 +220,14 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
         }
     }
 
+    kiteMcpUrl?.let { url ->
+        OAuthWebDialog("Log in to Kite", url,
+            // The login completes on Zerodha's side; detect a return to mcp.kite.trade, or let the user tap Done.
+            isRedirect = { u -> u.contains("mcp.kite.trade") && !u.contains("/login") && u.contains("status=success") },
+            onRedirect = { kiteMcpUrl = null; vm.completeKiteMcpLogin() },
+            onDismiss = { kiteMcpUrl = null },
+            onDone = { kiteMcpUrl = null; vm.completeKiteMcpLogin() })
+    }
     mcpLoginUrl?.let { url ->
         OAuthWebDialog("Sign in to INDmoney", url, isRedirect = IndMoneyMcp::isRedirect,
             onRedirect = { r -> mcpLoginUrl = null; vm.completeMcpLogin(r) }, onDismiss = { mcpLoginUrl = null })
@@ -228,11 +257,18 @@ private fun SummaryCard(totals: List<CurrencyTotal>, onAskAi: () -> Unit) {
 
 @Composable
 private fun HoldingRow(h: Holding, onClick: () -> Unit) {
-    CapitolCard(Modifier.fillMaxWidth().clickable(onClick = onClick), padding = PaddingValues(12.dp)) {
+    // Mutual funds have no chart to open.
+    CapitolCard(Modifier.fillMaxWidth().then(if (h.isMutualFund) Modifier else Modifier.clickable(onClick = onClick)), padding = PaddingValues(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(h.tradingSymbol, style = MaterialTheme.typography.titleSmall)
-                Text("${h.broker.label} · ${h.exchange} · ${"%.4g".format(h.quantity)} @ ${"%,.2f".format(h.averagePrice)}",
+                if (h.isMutualFund) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("MF", style = MaterialTheme.typography.labelSmall, color = CapitolColors.market.chart3,
+                        modifier = Modifier.background(CapitolColors.market.chart3.copy(alpha = 0.15f), androidx.compose.foundation.shape.RoundedCornerShape(4.dp)).padding(horizontal = 4.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(h.displayName ?: h.tradingSymbol, style = MaterialTheme.typography.titleSmall, maxLines = 2)
+                } else Text(h.tradingSymbol, style = MaterialTheme.typography.titleSmall)
+                Text(if (h.isMutualFund) "${h.broker.label}${h.folio?.let { " · folio $it" } ?: ""} · ${"%,.3f".format(h.quantity)} units @ ${"%,.2f".format(h.averagePrice)}"
+                    else "${h.broker.label} · ${h.exchange} · ${"%.4g".format(h.quantity)} @ ${"%,.2f".format(h.averagePrice)}",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Column(horizontalAlignment = Alignment.End) {
@@ -270,6 +306,38 @@ private fun KiteCard(vm: PortfolioViewModel, onLogin: (String) -> Unit) {
                 vm.saveKiteKeys(key, secret)
                 runCatching { vm.kite.loginUrl() }.onSuccess(onLogin)
             }, enabled = key.isNotBlank() && secret.isNotBlank()) { Text("Log in with Kite") }
+        }
+    }
+}
+
+@Composable
+private fun KiteMcpCard(vm: PortfolioViewModel, onLogin: (String) -> Unit, onAskAi: (String) -> Unit) {
+    val busy by vm.kiteMcpBusy.collectAsStateWithLifecycle()
+    CapitolCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Zerodha via Kite MCP · recommended", style = MaterialTheme.typography.titleMedium)
+                Text("Stocks + Coin mutual funds · no API key needed", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (vm.kiteMcp.isConnected) Icon(Icons.Default.CheckCircle, "Connected", tint = CapitolColors.market.bull)
+        }
+        Spacer(Modifier.height(4.dp))
+        if (vm.kiteMcp.isConnected) {
+            Text("Connected through Zerodha's official Kite MCP server (read-only). Kite logins last a day — reconnect when asked.",
+                style = MaterialTheme.typography.bodySmall)
+            Row {
+                Button({ onAskAi("Review my Zerodha portfolio including my Coin mutual funds: allocation, performance and the technical picture of my biggest stock positions.") }) {
+                    Icon(Icons.Default.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text("Ask AI")
+                }
+                TextButton({ vm.beginKiteMcpLogin(onLogin) }) { Text("Re-login") }
+                TextButton(vm::kiteMcpDisconnect) { Text("Disconnect") }
+            }
+        } else {
+            Text("Log in to Kite once and Capitol reads your stock holdings and Coin mutual funds through Zerodha's official MCP server. Capitol never places orders.",
+                style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(8.dp))
+            Button({ vm.beginKiteMcpLogin(onLogin) }, enabled = !busy) { Text(if (busy) "Connecting…" else "Connect Zerodha (Kite MCP)") }
         }
     }
 }
@@ -329,12 +397,18 @@ private fun IndMoneyCard(vm: PortfolioViewModel) {
 /** OAuth sign-in in a WebView; hands back the redirect URL once [isRedirect] matches. */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun OAuthWebDialog(title: String, url: String, isRedirect: (String) -> Boolean, onRedirect: (String) -> Unit, onDismiss: () -> Unit) {
+private fun OAuthWebDialog(title: String, url: String, isRedirect: (String) -> Boolean, onRedirect: (String) -> Unit, onDismiss: () -> Unit,
+                           onDone: (() -> Unit)? = null) {
     Dialog(onDismiss, DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).padding(start = 8.dp))
                 TextButton(onDismiss) { Text("Cancel") }
+                onDone?.let { Button(it) { Text("Done") } }
+            }
+            onDone?.let {
+                Text("Log in with your Kite user ID, password and TOTP. When Zerodha says you're logged in, tap Done.",
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             }
             AndroidView(factory = { ctx ->
                 WebView(ctx).apply {
@@ -458,8 +532,8 @@ private fun AnalyticsCard(a: com.capitol.app.analysis.CurrencyAnalytics) {
         }
         if (a.winners.isNotEmpty() || a.losers.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
-            Text("Best: " + a.winners.joinToString { "${it.tradingSymbol} %+.0f%%".format(it.pnlPercent) }.ifBlank { "—" }, style = MaterialTheme.typography.bodySmall, color = mc.bull)
-            Text("Worst: " + a.losers.joinToString { "${it.tradingSymbol} %+.0f%%".format(it.pnlPercent) }.ifBlank { "—" }, style = MaterialTheme.typography.bodySmall, color = mc.bear)
+            Text("Best: " + a.winners.joinToString { "${it.shortLabel} %+.0f%%".format(it.pnlPercent) }.ifBlank { "—" }, style = MaterialTheme.typography.bodySmall, color = mc.bull)
+            Text("Worst: " + a.losers.joinToString { "${it.shortLabel} %+.0f%%".format(it.pnlPercent) }.ifBlank { "—" }, style = MaterialTheme.typography.bodySmall, color = mc.bear)
         }
         a.warnings.forEach { Text("⚠ $it", style = MaterialTheme.typography.bodySmall, color = mc.neutral, modifier = Modifier.padding(top = 4.dp)) }
         Text("Total $sym${"%,.0f".format(a.total)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
