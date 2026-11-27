@@ -6,6 +6,7 @@ import com.capitol.app.AppContainer
 import com.capitol.app.analysis.AnalysisReport
 import com.capitol.app.analysis.TechnicalAnalyzer
 import com.capitol.app.data.market.ChartRange
+import com.capitol.app.data.market.isIntraday
 import com.capitol.app.data.market.PriceSeries
 import com.capitol.app.data.market.QuoteSnapshot
 import kotlinx.coroutines.async
@@ -31,6 +32,14 @@ data class HomeState(
     val watch: List<QuoteSnapshot> = emptyList(),
     val signals: List<AnalysisReport> = emptyList(),
     val error: String? = null,
+    /** Hero chart window: 1D (live, 5-minute bars) or 3M (daily). */
+    val heroRange: ChartRange = ChartRange.D1,
+    val moversUniverse: com.capitol.app.analysis.Universe = com.capitol.app.analysis.Universe.NIFTY50,
+    val gainers: List<com.capitol.app.data.live.LiveQuote> = emptyList(),
+    val losers: List<com.capitol.app.data.live.LiveQuote> = emptyList(),
+    val streaming: Boolean = false,
+    /** Epoch ms of the most recent live tick or snapshot shown. */
+    val lastTick: Long? = null,
 ) {
     /** Average composite score of the watchlist — Capitol's "market mood". */
     val mood: Double get() = if (signals.isEmpty()) 0.0 else signals.map { it.compositeScore }.average()
@@ -42,7 +51,13 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(HomeState())
     val state: StateFlow<HomeState> = _state.asStateFlow()
 
+    private var active = false
+
     init {
+        viewModelScope.launch {
+            c.live.quotes.collect { quotes -> applyLive(quotes) }
+        }
+        viewModelScope.launch { c.live.streaming.collect { _state.value = _state.value.copy(streaming = it) } }
         refresh()
         // Keep the home page in sync with the watchlist and default indicators.
         viewModelScope.launch {
@@ -70,17 +85,64 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
 
     fun selectHero(index: MarketIndex) {
         _state.value = _state.value.copy(heroIndex = index)
-        viewModelScope.launch {
-            runCatching { c.market.history(index.symbol, ChartRange.M3) }.onSuccess {
-                _state.value = _state.value.copy(hero = it)
-            }
+        loadHero()
+        updateWatch()
+    }
+
+    fun setHeroRange(r: ChartRange) { _state.value = _state.value.copy(heroRange = r); loadHero() }
+
+    fun setMoversUniverse(u: com.capitol.app.analysis.Universe) {
+        _state.value = _state.value.copy(moversUniverse = u)
+        updateWatch()
+        applyLive(c.live.quotes.value)
+    }
+
+    private fun loadHero(force: Boolean = false) = viewModelScope.launch {
+        val st = _state.value
+        runCatching { c.market.history(st.heroIndex.symbol, st.heroRange, force) }.onSuccess { s ->
+            // Apply the latest live tick straight away so the chart doesn't jump back.
+            val q = c.live.quotes.value[s.symbol]
+            _state.value = _state.value.copy(hero = q?.let { com.capitol.app.data.live.LiveCandles.merge(s, it, bucket(st.heroRange)) } ?: s)
         }
     }
+
+    /** Called by the screen when it becomes visible / hidden: live updates only run while shown. */
+    fun setActive(on: Boolean) {
+        active = on
+        if (on) updateWatch() else c.live.release(OWNER)
+    }
+
+    private fun moverSymbols(): List<String> = _state.value.moversUniverse.symbols
+
+    private fun updateWatch() {
+        if (!active) return
+        val st = _state.value
+        c.live.watch(OWNER, INDICES.map { it.symbol } + st.heroIndex.symbol + st.watch.map { it.symbol } + moverSymbols())
+    }
+
+    private fun bucket(r: ChartRange) = if (r.isIntraday) 300L else 86_400L
+
+    private fun applyLive(quotes: Map<String, com.capitol.app.data.live.LiveQuote>) {
+        if (quotes.isEmpty()) return
+        val st = _state.value
+        val hero = st.hero?.let { h -> quotes[h.symbol]?.let { com.capitol.app.data.live.LiveCandles.merge(h, it, bucket(st.heroRange)) } ?: h }
+        val (g, l) = com.capitol.app.data.live.LiveCandles.movers(quotes, moverSymbols())
+        val relevant = (INDICES.map { it.symbol } + st.heroIndex.symbol + st.watch.map { it.symbol } + moverSymbols()).mapNotNull { quotes[it] }
+        _state.value = st.copy(
+            hero = hero,
+            indices = st.indices.map { (i, snap) -> i to (quotes[snap.symbol]?.let { com.capitol.app.data.live.LiveCandles.apply(snap, it) } ?: snap) },
+            watch = st.watch.map { snap -> quotes[snap.symbol]?.let { com.capitol.app.data.live.LiveCandles.apply(snap, it) } ?: snap },
+            gainers = g, losers = l,
+            lastTick = relevant.maxOfOrNull { it.time }?.takeIf { it > 0 } ?: st.lastTick,
+        )
+    }
+
+    override fun onCleared() { c.live.release(OWNER) }
 
     fun refresh(force: Boolean = false) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         val settings = c.settings.settings.first()
-        val heroJob = async { runCatching { c.market.history(_state.value.heroIndex.symbol, ChartRange.M3, force) }.getOrNull() }
+        val heroJob = async { runCatching { c.market.history(_state.value.heroIndex.symbol, _state.value.heroRange, force) }.getOrNull() }
         val idxJob = async {
             INDICES.map { idx -> async { runCatching { c.market.history(idx.symbol, ChartRange.M1, force) }.getOrNull()?.let { idx to it } } }
                 .awaitAll().filterNotNull()
@@ -101,9 +163,13 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
             signals = signals.sortedByDescending { it.compositeScore },
             error = if (hero == null && idx.isEmpty()) "Couldn't reach the market data source. Check your connection or the data source in Settings." else null,
         )
+        applyLive(c.live.quotes.value)
+        updateWatch()
+        if (force) c.live.snapshot((INDICES.map { it.symbol } + moverSymbols() + watchSymbols).distinct())
     }
 
     companion object {
+        private const val OWNER = "home"
         val INDICES = listOf(
             MarketIndex("^NSEI", "NIFTY 50", "India"),
             MarketIndex("^BSESN", "SENSEX", "India"),

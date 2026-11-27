@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
@@ -27,6 +28,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -173,5 +176,46 @@ fun AutoRefreshDuringMarketHours(intervalMs: Long = 60_000, onTick: () -> Unit) 
                 if (com.capitol.app.data.market.MarketHours.anyOpen()) tick.value()
             }
         }
+    }
+}
+
+/**
+ * A price that briefly flashes green (up) or red (down) when it changes — the classic
+ * live-ticker effect.
+ */
+@Composable
+fun FlashingPrice(value: Double, modifier: Modifier = Modifier, fontSize: Int = 14, format: (Double) -> String = { "%,.2f".format(it) }) {
+    val mc = com.capitol.app.ui.theme.CapitolColors.market
+    var previous by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(value) }
+    val flash = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(0f) }
+    var up by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(true) }
+    androidx.compose.runtime.LaunchedEffect(value) {
+        if (value != previous) {
+            up = value > previous; previous = value
+            flash.snapTo(1f); flash.animateTo(0f, androidx.compose.animation.core.tween(900))
+        }
+    }
+    val bg = (if (up) mc.bull else mc.bear).copy(alpha = 0.35f * flash.value)
+    Text(format(value), modifier.clip(RoundedCornerShape(6.dp)).background(bg).padding(horizontal = 4.dp, vertical = 1.dp),
+        style = NumberStyle.copy(fontSize = fontSize.sp))
+}
+
+/** "● LIVE · 14:32:05" badge; pulses while streaming. */
+@Composable
+fun LiveBadge(streaming: Boolean, lastTick: Long?, marketOpen: Boolean, modifier: Modifier = Modifier) {
+    val mc = com.capitol.app.ui.theme.CapitolColors.market
+    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "live")
+    val a by t.animateFloat(0.25f, 1f, androidx.compose.animation.core.infiniteRepeatable(
+        androidx.compose.animation.core.tween(800), androidx.compose.animation.core.RepeatMode.Reverse), label = "pulse")
+    val fmt = androidx.compose.runtime.remember { java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()) }
+    val (label, color) = when {
+        !marketOpen -> "MARKET CLOSED" to MaterialTheme.colorScheme.onSurfaceVariant
+        streaming -> "LIVE" to mc.bear
+        else -> "DELAYED" to mc.neutral
+    }
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.padding(end = 5.dp).size(7.dp).clip(androidx.compose.foundation.shape.CircleShape)
+            .background(color.copy(alpha = if (streaming && marketOpen) a else 0.8f)))
+        Text(label + (lastTick?.let { " · ${fmt.format(java.util.Date(it))}" } ?: ""), style = MaterialTheme.typography.labelSmall, color = color)
     }
 }
