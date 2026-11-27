@@ -306,4 +306,71 @@ class KiteMcpTest {
             kite.disconnect()
         }
     }
+
+    /**
+     * Zerodha's live server: three tools (portfolio, mutual_funds, orders) chosen by a `mode` argument.
+     * mutual_funds publishes no enum and answers "Invalid mode. Must be one of: holdings" without one.
+     */
+    @Test fun modeBasedToolsAsOnZerodhasServer() = runBlocking {
+        MockWebServer().use { server ->
+            val calls = mutableListOf<String>()
+            val portfolioSchema = """{"type":"object","properties":{"mode":{"type":"string","enum":["positions","holdings","margins"]}},"required":["mode"]}"""
+            val mfSchema = """{"type":"object","properties":{"mode":{"type":"string","description":"What to fetch"}}}"""
+            val ordersSchema = """{"type":"object","properties":{"mode":{"type":"string","enum":["list","history","place","modify","cancel"]}},"required":["mode"]}"""
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    if (request.method != "POST") return MockResponse().setResponseCode(404)
+                    val msg = json.parseToJsonElement(request.body.readUtf8()).jsonObject
+                    val id = msg["id"]
+                    fun ok(s: String) = MockResponse().setHeader("Content-Type", "application/json").setBody(s)
+                    fun text(t: String, err: Boolean = false) = ok("""{"jsonrpc":"2.0","id":$id,"result":{"isError":$err,"content":[{"type":"text","text":${Json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(t))}}]}}""")
+                    return when (msg["method"]!!.jsonPrimitive.content) {
+                        "initialize" -> ok("""{"jsonrpc":"2.0","id":$id,"result":{"protocolVersion":"2025-06-18","capabilities":{}}}""").setHeader("Mcp-Session-Id", "m1")
+                        "notifications/initialized" -> MockResponse().setResponseCode(202)
+                        "tools/list" -> ok("""{"jsonrpc":"2.0","id":$id,"result":{"tools":[
+                            {"name":"portfolio","inputSchema":$portfolioSchema},
+                            {"name":"mutual_funds","inputSchema":$mfSchema},
+                            {"name":"orders","inputSchema":$ordersSchema}]}}""")
+                        else -> {
+                            val p = msg["params"]!!.jsonObject
+                            val name = p["name"]!!.jsonPrimitive.content
+                            val mode = p["arguments"]?.jsonObject?.get("mode")?.jsonPrimitive?.content
+                            calls += "$name:$mode"
+                            when {
+                                name == "login" -> text("Open https://kite.zerodha.com/connect/login?v=3 to log in")
+                                name == "get_profile" -> text("""{"user_id":"AB1234"}""")
+                                name == "portfolio" && mode == "holdings" -> text("""Here are your holdings: {"data":{"holdings":[{"tradingsymbol":"TCS","exchange":"NSE","quantity":2,"average_price":3000,"last_price":3500}]}}""")
+                                name == "mutual_funds" && mode == "holdings" -> text(MF_JSON)
+                                name == "orders" && mode == "list" -> text("[]")
+                                else -> text("Invalid mode. Must be one of: holdings", err = true)
+                            }
+                        }
+                    }
+                }
+            }
+            val secrets = SecretStore(ApplicationProvider.getApplicationContext())
+            val kite = KiteMcp(OkHttpClient(), secrets, server.url("/mcp").toString())
+            kite.beginLogin(); kite.completeLogin()
+            assertEquals("TCS", kite.holdings().single().tradingSymbol)
+            assertEquals("INF879O01027", kite.mfHoldings().single().tradingSymbol)
+            assertTrue(calls.toString(), "portfolio:holdings" in calls && "mutual_funds:holdings" in calls)
+            // The agent sees `orders` with its read modes only; write modes are refused even if asked for.
+            val orders = kite.readTools().single { it.name == "orders" }
+            assertEquals("""["list","history"]""", orders.inputSchema["properties"]!!.jsonObject["mode"]!!.jsonObject["enum"].toString())
+            assertEquals("[]", kite.callRead("orders", JsonObject(mapOf("mode" to kotlinx.serialization.json.JsonPrimitive("list")))))
+            listOf("place", "modify", "cancel", "place_order").forEach { m ->
+                assertTrue(m, runCatching { kite.callRead("orders", JsonObject(mapOf("mode" to kotlinx.serialization.json.JsonPrimitive(m)))) }.isFailure)
+            }
+            assertFalse(calls.toString(), calls.any { it.startsWith("orders:") && it != "orders:list" })
+            kite.disconnect()
+        }
+    }
+
+    @Test fun retryArgsFromModeError() {
+        val empty = JsonObject(emptyMap())
+        assertEquals("""{"mode":"holdings"}""", KiteMcp.retryArgs("Invalid mode. Must be one of: holdings", empty).toString())
+        assertEquals("""{"mode":"holdings"}""", KiteMcp.retryArgs("Invalid mode. Must be one of: sips, holdings, orders", empty).toString())
+        assertEquals(null, KiteMcp.retryArgs("Invalid mode. Must be one of: place, cancel", empty))
+        assertEquals(null, KiteMcp.retryArgs("something else", empty))
+    }
 }
