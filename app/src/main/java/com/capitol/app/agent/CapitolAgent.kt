@@ -93,7 +93,9 @@ class CapitolAgent(
         Tool.builder()
             .eagerInputStreaming(true)
             .name(ext.claudeName)
-            .description("[INDmoney account, read via INDmoney's official MCP server] " + ext.tool.description.ifBlank { ext.tool.name })
+            .description((if (ext.claudeName.startsWith(com.capitol.app.data.mcp.KiteMcp.PREFIX))
+                "[Zerodha Kite/Coin account, read-only via Zerodha's official Kite MCP server] " else
+                "[INDmoney account, read via INDmoney's official MCP server] ") + ext.tool.description.ifBlank { ext.tool.name })
             .inputSchema(
                 Tool.InputSchema.builder()
                     .properties(Tool.InputSchema.Properties.builder().apply {
@@ -274,8 +276,11 @@ class CapitolAgent(
             "add_to_watchlist" -> "Adding ${s("symbol")} to watchlist"
             "remove_from_watchlist" -> "Removing ${s("symbol")} from watchlist"
             "get_portfolio" -> "Reading your broker holdings"
-            else -> if (name.startsWith(AgentTools.INDMONEY_PREFIX))
-                "Asking INDmoney: ${name.removePrefix(AgentTools.INDMONEY_PREFIX).replace('_', ' ')}" else name
+            else -> when {
+                name.startsWith(AgentTools.INDMONEY_PREFIX) -> "Asking INDmoney: ${name.removePrefix(AgentTools.INDMONEY_PREFIX).replace('_', ' ')}"
+                name.startsWith(com.capitol.app.data.mcp.KiteMcp.PREFIX) -> "Asking Zerodha: ${name.removePrefix(com.capitol.app.data.mcp.KiteMcp.PREFIX).replace('_', ' ')}"
+                else -> name
+            }
         }
     }
 
@@ -308,6 +313,7 @@ class CapitolAgent(
             - If the user gives a company name rather than a ticker, call search_symbol first. Indian stocks use .NS (NSE) or .BO (BSE) suffixes.
             - When the user picks specific indicators, explain the result through those indicators specifically: what each one measures, what its current value says, and how they agree or conflict.
             - For portfolio or watchlist questions, use get_portfolio / scan_watchlist, then analyse the most relevant names.
+            - Tools whose names start with kite__ read the user's Zerodha account (stocks, positions, and Coin mutual funds via kite__get_mf_holdings) through Zerodha's official Kite MCP server. They are read-only.
             - Tools whose names start with indmoney__ read the user's INDmoney account (including US stocks) through INDmoney's official MCP server. Use them for INDmoney holdings questions; US tickers have no suffix (e.g. AAPL) when you pass them to run_technical_analysis.
             - Only modify the watchlist when the user explicitly asks.
 

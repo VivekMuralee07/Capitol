@@ -22,7 +22,7 @@ class IndMoneyMcp(
     private val oauth = McpOAuth(http)
     private val json = Json { ignoreUnknownKeys = true }
     private val refreshLock = Mutex()
-    private val client = McpClient(http, serverUrl) { validAccessToken() }
+    private val client = McpClient(http, serverUrl, token = { validAccessToken() })
     private var toolCache: List<McpTool>? = null
 
     val isConnected get() = secrets.has(Key.MCP_INDMONEY_ACCESS)

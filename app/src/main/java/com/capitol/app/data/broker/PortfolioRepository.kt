@@ -24,20 +24,38 @@ data class CurrencyTotal(val currency: String, val invested: Double, val current
     val symbol get() = when (currency) { "INR" -> "₹"; "USD" -> "$"; else -> "$currency " }
 }
 
-class PortfolioRepository(val kite: KiteConnectClient, val indmoney: IndMoneyClient) {
+class PortfolioRepository(
+    val kite: KiteConnectClient,
+    val indmoney: IndMoneyClient,
+    val kiteMcp: com.capitol.app.data.mcp.KiteMcp? = null,
+) {
     private val _state = MutableStateFlow(PortfolioState())
     val state: StateFlow<PortfolioState> = _state.asStateFlow()
     private var imported: List<Holding> = emptyList()
 
     suspend fun refresh() = coroutineScope {
         _state.value = _state.value.copy(loading = true, errors = emptyList())
-        val k = async { if (kite.isConnected) runCatching { kite.holdings() } else Result.success(emptyList()) }
+        val k = async {
+            when {
+                kite.isConnected -> runCatching { kite.holdings() }
+                kiteMcp?.isConnected == true -> runCatching { kiteMcp.holdings() } // no API key needed
+                else -> Result.success(emptyList())
+            }
+        }
         val i = async { if (indmoney.isConnected) runCatching { indmoney.holdings() } else Result.success(emptyList()) }
-        val kr = k.await(); val ir = i.await()
-        listOfNotNull(kr.exceptionOrNull(), ir.exceptionOrNull()).forEach { com.capitol.app.diagnostics.Diagnostics.error("Broker", it.message ?: "error", it) }
+        // Coin mutual funds: from the Kite Connect API when connected, otherwise via Kite MCP.
+        val mf = async {
+            when {
+                kite.isConnected -> runCatching { kite.mfHoldings() }
+                kiteMcp?.isConnected == true -> runCatching { kiteMcp.mfHoldings() }
+                else -> Result.success(emptyList())
+            }
+        }
+        val kr = k.await(); val ir = i.await(); val mr = mf.await()
+        listOfNotNull(kr.exceptionOrNull(), ir.exceptionOrNull(), mr.exceptionOrNull()).forEach { com.capitol.app.diagnostics.Diagnostics.error("Broker", it.message ?: "error", it) }
         _state.value = PortfolioState(
-            holdings = kr.getOrDefault(emptyList()) + ir.getOrDefault(emptyList()) + imported,
-            errors = listOfNotNull(kr.exceptionOrNull()?.message, ir.exceptionOrNull()?.message),
+            holdings = kr.getOrDefault(emptyList()) + mr.getOrDefault(emptyList()) + ir.getOrDefault(emptyList()) + imported,
+            errors = listOfNotNull(kr.exceptionOrNull()?.message, ir.exceptionOrNull()?.message, mr.exceptionOrNull()?.message?.let { "Mutual funds: $it" }),
             loading = false,
             updatedAt = System.currentTimeMillis(),
         )
@@ -56,5 +74,5 @@ class PortfolioRepository(val kite: KiteConnectClient, val indmoney: IndMoneyCli
         return parsed.size
     }
 
-    val anyConnected get() = kite.isConnected || indmoney.isConnected || imported.isNotEmpty()
+    val anyConnected get() = kite.isConnected || indmoney.isConnected || kiteMcp?.isConnected == true || imported.isNotEmpty()
 }

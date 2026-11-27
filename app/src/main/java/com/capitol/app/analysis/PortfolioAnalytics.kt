@@ -37,6 +37,10 @@ data class CurrencyAnalytics(
     }
 }
 
+/** Short display label: ticker for stocks, abbreviated scheme name for mutual funds. */
+val Holding.shortLabel: String get() =
+    if (isMutualFund) (displayName ?: tradingSymbol).replace(Regex("(?i)\\s*-?\\s*(direct|regular)\\s*(plan)?.*$"), "").take(22) else tradingSymbol
+
 object PortfolioAnalytics {
     fun compute(
         holdings: List<Holding>,
@@ -52,7 +56,7 @@ object PortfolioAnalytics {
         val total = merged.sumOf { it.second }
         val weights = merged.map { it.first.yahooSymbol to it.second / total }
         val sorted = merged.sortedByDescending { it.second }
-        val byHolding = sorted.take(6).map { AllocationSlice(it.first.tradingSymbol, it.second, it.second / total * 100) } +
+        val byHolding = sorted.take(6).map { AllocationSlice(it.first.shortLabel, it.second, it.second / total * 100) } +
             sorted.drop(6).takeIf { it.isNotEmpty() }?.let { rest -> listOf(AllocationSlice("Others (${rest.size})", rest.sumOf { it.second }, rest.sumOf { it.second } / total * 100)) }.orEmpty()
         val bySector = merged.groupBy { sectors[it.first.yahooSymbol] ?: "Unknown" }
             .map { (sec, list) -> AllocationSlice(sec, list.sumOf { it.second }, list.sumOf { it.second } / total * 100) }

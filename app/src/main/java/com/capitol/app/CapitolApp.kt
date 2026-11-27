@@ -54,9 +54,10 @@ class AppContainer(context: Context) {
             if (settings.settings.first().dataSource == com.capitol.app.data.prefs.DataSourceMode.YFINANCE_SERVICE) backendForLive else yahooForLive
         },
     )
-    val portfolio = PortfolioRepository(KiteConnectClient(http, secrets), IndMoneyClient(http, secrets))
+    val kiteMcp = com.capitol.app.data.mcp.KiteMcp(http, secrets)
+    val portfolio = PortfolioRepository(KiteConnectClient(http, secrets), IndMoneyClient(http, secrets), kiteMcp)
     val indmoneyMcp = IndMoneyMcp(http, secrets)
-    val agentTools = AgentTools(market, watchlist, portfolio, indmoneyMcp)
+    val agentTools = AgentTools(market, watchlist, portfolio, indmoneyMcp, kiteMcp)
     val agent = CapitolAgent(secrets, agentTools)
     init { agentTools.analyticsLoader = { h -> com.capitol.app.analysis.PortfolioLoader.load(this, h) } }
     val chats = com.capitol.app.agent.ChatStore(java.io.File(context.filesDir, "chats"))

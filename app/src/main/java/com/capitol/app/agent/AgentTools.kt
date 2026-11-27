@@ -23,6 +23,7 @@ class AgentTools(
     private val watchlist: WatchlistStore,
     private val portfolio: PortfolioRepository,
     private val indmoney: IndMoneyMcp,
+    private val kiteMcp: com.capitol.app.data.mcp.KiteMcp? = null,
 ) {
     data class Spec(val name: String, val description: String, val properties: Map<String, Any>, val required: List<String>)
 
@@ -97,17 +98,24 @@ class AgentTools(
     /** A tool exposed by a connected MCP server (INDmoney), renamed for Claude. */
     data class ExternalTool(val claudeName: String, val tool: McpTool)
 
-    @Volatile private var external: Map<String, McpTool> = emptyMap()
+    /** Claude tool name → (server, MCP tool). */
+    @Volatile private var external: Map<String, Pair<String, McpTool>> = emptyMap()
 
     /** INDmoney MCP tools, when the user has connected INDmoney. Failures just hide the tools. */
+    /** Tools from connected MCP servers: INDmoney (all its tools) and Kite MCP (read-only tools only). */
     suspend fun externalTools(): List<ExternalTool> {
-        if (!indmoney.isConnected) { external = emptyMap(); return emptyList() }
-        val list = runCatching { indmoney.tools() }.getOrDefault(emptyList()).map { ExternalTool(claudeToolName(it.name), it) }
-        external = list.associate { it.claudeName to it.tool }
-        return list
+        val ind = if (indmoney.isConnected) runCatching { indmoney.tools() }.getOrDefault(emptyList())
+            .map { ExternalTool(claudeToolName(it.name), it) to "indmoney" } else emptyList()
+        val kite = if (kiteMcp?.isConnected == true) runCatching { kiteMcp!!.readTools() }.getOrDefault(emptyList())
+            .map { ExternalTool(claudeToolName(it.name, com.capitol.app.data.mcp.KiteMcp.PREFIX), it) to "kite" } else emptyList()
+        val all = ind + kite
+        external = all.associate { (t, server) -> t.claudeName to (server to t.tool) }
+        return all.map { it.first }
     }
 
-    suspend fun execute(name: String, input: JsonObject): String = external[name]?.let { indmoney.call(it.name, input) } ?: when (name) {
+    suspend fun execute(name: String, input: JsonObject): String = external[name]?.let { (server, tool) ->
+        if (server == "kite") kiteMcp!!.callRead(tool.name, input) else indmoney.call(tool.name, input)
+    } ?: when (name) {
         "search_symbol" -> {
             val q = input.s("query") ?: error("query is required")
             val r = market.search(q)
@@ -210,7 +218,7 @@ class AgentTools(
                 portfolio.refresh()
                 val st = portfolio.state.value
                 (st.holdings.joinToString("\n") {
-                    "${it.yahooSymbol} [${it.broker.label}, ${it.currency}] qty ${it.quantity}, avg ${"%.2f".format(it.averagePrice)}, LTP ${"%.2f".format(it.lastPrice)}, P&L ${"%.2f".format(it.pnl)} (${"%+.2f".format(it.pnlPercent)}%)"
+                    (if (it.isMutualFund) "MF ${it.displayName ?: it.tradingSymbol} (${it.tradingSymbol})" else it.yahooSymbol) + " [${it.broker.label}, ${it.currency}] qty ${it.quantity}, avg ${"%.2f".format(it.averagePrice)}, LTP ${"%.2f".format(it.lastPrice)}, P&L ${"%.2f".format(it.pnl)} (${"%+.2f".format(it.pnlPercent)}%)"
                 } + st.totalsByCurrency.joinToString("") { t ->
                     "\nTotal (${t.currency}): invested ${"%.2f".format(t.invested)}, current ${"%.2f".format(t.current)}, P&L ${"%+.2f".format(t.pnlPercent)}%"
                 } +
@@ -243,7 +251,7 @@ class AgentTools(
     companion object {
         const val INDMONEY_PREFIX = "indmoney__"
         /** Claude tool names must match ^[a-zA-Z0-9_-]{1,64}$. */
-        fun claudeToolName(mcpName: String) = (INDMONEY_PREFIX + mcpName.replace(Regex("[^a-zA-Z0-9_-]"), "_")).take(64)
+        fun claudeToolName(mcpName: String, prefix: String = INDMONEY_PREFIX) = (prefix + mcpName.replace(Regex("[^a-zA-Z0-9_-]"), "_")).take(64)
     }
 
     private fun JsonObject.s(k: String) = (this[k] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }

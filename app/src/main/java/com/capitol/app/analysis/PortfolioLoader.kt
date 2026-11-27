@@ -17,11 +17,12 @@ object PortfolioLoader {
     suspend fun load(c: AppContainer, holdings: List<Holding>): List<CurrencyAnalytics> = coroutineScope {
         val settings = c.settings.settings.first()
         val gate = Semaphore(5)
-        val symbols = holdings.map { it.yahooSymbol }.distinct()
+        // Mutual funds have no Yahoo price history; they're included in allocation only.
+        val symbols = holdings.filter { !it.isMutualFund }.map { it.yahooSymbol }.distinct()
         val series = symbols.map { s -> async { gate.withPermit { s to runCatching { c.market.history(s, ChartRange.Y1) }.getOrNull() } } }
         val sectors = symbols.map { s -> async { gate.withPermit { s to runCatching { c.market.fundamentals(s).sector }.getOrNull() } } }
         val seriesMap = series.awaitAll().mapNotNull { (k, v) -> v?.let { k to it } }.toMap()
-        val sectorMap = sectors.awaitAll().toMap()
+        val sectorMap = sectors.awaitAll().toMap() + holdings.filter { it.isMutualFund }.associate { it.yahooSymbol to "Mutual funds" }
         withContext(Dispatchers.Default) {
             PortfolioAnalytics.compute(holdings, seriesMap, sectorMap, settings.indicatorParams, settings.defaultIndicators)
         }
