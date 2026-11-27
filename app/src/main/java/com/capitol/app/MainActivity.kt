@@ -70,6 +70,10 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     /** Handles capitol://kite-callback?request_token=... if Kite redirects via the browser. */
     private fun handleDeepLink(intent: Intent?) {
         val data = intent?.data?.toString() ?: return
+        if (com.capitol.app.data.mcp.KiteMcp.isRedirect(data)) {
+            lifecycleScope.launch { runCatching { container.kiteMcp.completeLogin(data); container.portfolio.refresh() } }
+            return
+        }
         if (com.capitol.app.data.mcp.IndMoneyMcp.isRedirect(data)) {
             lifecycleScope.launch { runCatching { container.indmoneyMcp.completeLogin(data) } }
             return

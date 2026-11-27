@@ -106,6 +106,9 @@ dependencies {
     implementation("androidx.glance:glance-material3:1.1.1")
     implementation("androidx.browser:browser:1.9.0")
     implementation("androidx.biometric:biometric:1.1.0")
+    // biometric pulls in fragment 1.2.x, whose FragmentActivity rejects modern ActivityResult request
+    // codes ("Can only use lower 16 bits for requestCode") — crashing permission prompts. Use a current one.
+    implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.security:security-crypto:1.1.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
