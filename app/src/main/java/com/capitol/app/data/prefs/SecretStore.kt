@@ -49,4 +49,11 @@ class SecretStore(context: Context) {
     }
 
     fun has(key: Key) = get(key) != null
+
+    /** Access by name (used by generic connectors whose keys are derived from a prefix). Same storage as [Key]s. */
+    fun getRaw(name: String): String? = prefs.getString(name, null)?.takeIf { it.isNotBlank() }
+    fun putRaw(name: String, value: String?) {
+        prefs.edit().apply { if (value.isNullOrBlank()) remove(name) else putString(name, value.trim()) }.apply()
+        _version.value++
+    }
 }

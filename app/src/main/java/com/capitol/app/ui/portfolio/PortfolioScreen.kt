@@ -131,17 +131,19 @@ class PortfolioViewModel(val c: AppContainer) : ViewModel() {
     // Zerodha via Kite MCP (login tool; no API key needed). Includes Coin mutual funds.
     val kiteMcp get() = c.kiteMcp
     val kiteMcpBusy = MutableStateFlow(false)
+    /** Shown inside the Kite card, so failures are never silent. */
+    val kiteMcpError = MutableStateFlow<String?>(null)
     fun beginKiteMcpLogin(onUrl: (String) -> Unit) = viewModelScope.launch {
-        kiteMcpBusy.value = true
+        kiteMcpBusy.value = true; kiteMcpError.value = null
         runCatching { kiteMcp.beginLogin() }.onSuccess(onUrl)
-            .onFailure { com.capitol.app.diagnostics.Diagnostics.error("KiteMCP", it.message ?: "error", it); message.value = it.message }
+            .onFailure { com.capitol.app.diagnostics.Diagnostics.error("KiteMCP", it.message ?: "error", it); kiteMcpError.value = it.message ?: "Couldn't connect" }
         kiteMcpBusy.value = false
     }
-    fun completeKiteMcpLogin() = viewModelScope.launch {
-        kiteMcpBusy.value = true
-        runCatching { kiteMcp.completeLogin() }
-            .onSuccess { message.value = "Connected to Zerodha via Kite MCP — loading stocks and Coin mutual funds"; refresh() }
-            .onFailure { message.value = it.message }
+    fun completeKiteMcpLogin(redirectUrl: String? = null) = viewModelScope.launch {
+        kiteMcpBusy.value = true; kiteMcpError.value = null
+        runCatching { kiteMcp.completeLogin(redirectUrl) }
+            .onSuccess { message.value = "Connected to Zerodha — loading stocks and Coin mutual funds"; refresh() }
+            .onFailure { com.capitol.app.diagnostics.Diagnostics.error("KiteMCP", it.message ?: "error", it); kiteMcpError.value = it.message ?: "Sign-in failed" }
         kiteMcpBusy.value = false
     }
     fun kiteMcpDisconnect() { kiteMcp.disconnect(); message.value = "Disconnected Kite MCP"; refresh() }
@@ -221,12 +223,14 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
     }
 
     kiteMcpUrl?.let { url ->
+        val oauthMode = vm.kiteMcp.usesOAuth
         OAuthWebDialog("Log in to Kite", url,
-            // The login completes on Zerodha's side; detect a return to mcp.kite.trade, or let the user tap Done.
-            isRedirect = { u -> u.contains("mcp.kite.trade") && !u.contains("/login") && u.contains("status=success") },
-            onRedirect = { kiteMcpUrl = null; vm.completeKiteMcpLogin() },
+            // OAuth: Zerodha redirects to capitol://kite-mcp-callback. login-tool mode: the user taps Done.
+            isRedirect = { u -> com.capitol.app.data.mcp.KiteMcp.isRedirect(u) ||
+                (!oauthMode && u.contains("mcp.kite.trade") && !u.contains("/login") && u.contains("status=success")) },
+            onRedirect = { r -> kiteMcpUrl = null; vm.completeKiteMcpLogin(r.takeIf { oauthMode }) },
             onDismiss = { kiteMcpUrl = null },
-            onDone = { kiteMcpUrl = null; vm.completeKiteMcpLogin() })
+            onDone = if (oauthMode) null else ({ kiteMcpUrl = null; vm.completeKiteMcpLogin() }))
     }
     mcpLoginUrl?.let { url ->
         OAuthWebDialog("Sign in to INDmoney", url, isRedirect = IndMoneyMcp::isRedirect,
@@ -313,6 +317,7 @@ private fun KiteCard(vm: PortfolioViewModel, onLogin: (String) -> Unit) {
 @Composable
 private fun KiteMcpCard(vm: PortfolioViewModel, onLogin: (String) -> Unit, onAskAi: (String) -> Unit) {
     val busy by vm.kiteMcpBusy.collectAsStateWithLifecycle()
+    val error by vm.kiteMcpError.collectAsStateWithLifecycle()
     CapitolCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -339,6 +344,7 @@ private fun KiteMcpCard(vm: PortfolioViewModel, onLogin: (String) -> Unit, onAsk
             Spacer(Modifier.height(8.dp))
             Button({ vm.beginKiteMcpLogin(onLogin) }, enabled = !busy) { Text(if (busy) "Connecting…" else "Connect Zerodha (Kite MCP)") }
         }
+        error?.let { ErrorBanner(it, Modifier.padding(top = 8.dp)) }
     }
 }
 

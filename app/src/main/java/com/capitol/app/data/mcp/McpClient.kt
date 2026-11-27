@@ -121,7 +121,9 @@ class McpClient(
                 .post(json.encodeToString(msg).toRequestBody("application/json".toMediaType()))
                 .build()
             http.newCall(req).execute().use { resp ->
-                if (resp.code == 401 || resp.code == 403) throw McpException("INDmoney session expired — please reconnect.", unauthorized = true)
+                if (resp.code == 401 || resp.code == 403) throw McpException(
+                    "The server asked to sign in (HTTP ${resp.code}${if (resp.header("WWW-Authenticate") != null) ", OAuth" else ""}) — please connect again.",
+                    unauthorized = true)
                 if (resp.code == 404 && sessionId != null) { reset(); sessionLost = true; throw McpException("MCP session expired, please retry") }
                 resp.header("Mcp-Session-Id")?.let { if (it != sessionId) { sessionId = it; sessionStore?.save(it) } }
                 if (!expectResponse) return@withContext null

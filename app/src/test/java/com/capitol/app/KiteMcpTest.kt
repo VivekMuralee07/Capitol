@@ -15,6 +15,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -73,8 +74,9 @@ class KiteMcpTest {
         var dropSession = false
         val sessions = mutableSetOf<String>()
         override fun dispatch(request: RecordedRequest): MockResponse {
+            if (request.method != "POST") return MockResponse().setResponseCode(404) // no OAuth metadata
             val msg = json.parseToJsonElement(request.body.readUtf8()).jsonObject
-            val method = msg["method"]!!.jsonPrimitive.content
+            val method = msg["method"]?.jsonPrimitive?.content ?: return MockResponse().setResponseCode(400)
             val id = msg["id"]
             val sid = request.getHeader("Mcp-Session-Id")
             if (method == "initialize") {
@@ -146,6 +148,52 @@ class KiteMcpTest {
             val err = runCatching { again.mfHoldings() }.exceptionOrNull()
             assertTrue(err is BrokerException && err.message!!.contains("expired"))
             assertFalse(again.isConnected)
+        }
+    }
+
+    /** Fake Kite MCP that uses standard MCP OAuth (401 + protected-resource metadata), like INDmoney. */
+    @Test fun kiteMcpOAuthMode() = runBlocking {
+        MockWebServer().use { server ->
+            var issued = false
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    val base = server.url("/").toString().trimEnd('/')
+                    val path = request.requestUrl!!.encodedPath
+                    val body = request.body.readUtf8()
+                    fun ok(s: String) = MockResponse().setHeader("Content-Type", "application/json").setBody(s)
+                    return when {
+                        path == "/.well-known/oauth-protected-resource/mcp" -> ok("""{"resource":"$base/mcp","authorization_servers":["$base"]}""")
+                        path == "/.well-known/oauth-authorization-server" -> ok("""{"issuer":"$base","authorization_endpoint":"$base/oauth/authorize","token_endpoint":"$base/oauth/token","registration_endpoint":"$base/oauth/register"}""")
+                        path == "/oauth/register" -> ok("""{"client_id":"capitol"}""")
+                        path == "/oauth/token" -> { issued = true; ok("""{"access_token":"kite-at","refresh_token":"kite-rt","expires_in":86400}""") }
+                        path == "/mcp" -> {
+                            if (request.getHeader("Authorization") != "Bearer kite-at") return MockResponse().setResponseCode(401)
+                                .setHeader("WWW-Authenticate", "Bearer resource_metadata=\"$base/.well-known/oauth-protected-resource/mcp\"")
+                            val msg = json.parseToJsonElement(body).jsonObject
+                            val id = msg["id"]
+                            when (msg["method"]!!.jsonPrimitive.content) {
+                                "initialize" -> ok("""{"jsonrpc":"2.0","id":$id,"result":{"protocolVersion":"2025-06-18","capabilities":{}}}""").setHeader("Mcp-Session-Id", "o1")
+                                "notifications/initialized" -> MockResponse().setResponseCode(202)
+                                "tools/list" -> ok("""{"jsonrpc":"2.0","id":$id,"result":{"tools":[{"name":"get_mf_holdings","inputSchema":{"type":"object"}},{"name":"place_order","inputSchema":{"type":"object"}}]}}""")
+                                else -> ok("""{"jsonrpc":"2.0","id":$id,"result":{"content":[{"type":"text","text":${Json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(MF_JSON))}}]}}""")
+                            }
+                        }
+                        else -> MockResponse().setResponseCode(404)
+                    }
+                }
+            }
+            val secrets = SecretStore(ApplicationProvider.getApplicationContext())
+            val kite = KiteMcp(OkHttpClient(), secrets, server.url("/mcp").toString())
+            val authUrl = kite.beginLogin()
+            assertTrue(kite.usesOAuth)
+            assertTrue(authUrl.contains("/oauth/authorize") && authUrl.contains(java.net.URLEncoder.encode(KiteMcp.REDIRECT_URI, "UTF-8")))
+            val state = authUrl.toHttpUrl().queryParameter("state")!!
+            kite.completeLogin("${KiteMcp.REDIRECT_URI}?code=abc&state=$state")
+            assertTrue(issued && kite.isConnected)
+            assertEquals("INF879O01027", kite.mfHoldings().single().tradingSymbol)
+            assertEquals(listOf("get_mf_holdings"), kite.readTools().map { it.name })
+            kite.disconnect()
+            assertFalse(kite.isConnected)
         }
     }
 }
