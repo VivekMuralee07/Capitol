@@ -89,5 +89,8 @@ class MarketRepository(
         runCatching { json.decodeFromString<PriceSeries>(f.readText()).copy(cachedAt = f.lastModified()) }.getOrNull()
     }
 
+    /** Whole-market top gainers/losers for today (Yahoo screener, on-device whichever data source is set). */
+    suspend fun dayMovers(market: MoversMarket) = yahoo.dayMovers(market)
+
     companion object { private const val CACHE_MS = 60_000L; private const val FUND_MS = 12 * 3_600_000L }
 }

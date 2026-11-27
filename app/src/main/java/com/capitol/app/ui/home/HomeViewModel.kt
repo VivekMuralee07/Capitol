@@ -37,6 +37,8 @@ data class HomeState(
     val heroQuote: com.capitol.app.data.live.LiveQuote? = null,
     val moversUniverse: com.capitol.app.analysis.Universe = com.capitol.app.analysis.Universe.NIFTY50,
     val gainers: List<com.capitol.app.data.live.LiveQuote> = emptyList(),
+    /** True when movers come from the whole market (Yahoo screener); false while falling back to the index list. */
+    val moversWholeMarket: Boolean = false,
     val losers: List<com.capitol.app.data.live.LiveQuote> = emptyList(),
     val streaming: Boolean = false,
     /** Epoch ms of the most recent live tick or snapshot shown. */
@@ -53,6 +55,9 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     val state: StateFlow<HomeState> = _state.asStateFlow()
 
     private var active = false
+    /** Whole-market mover candidates per tab (today's top ~25 gainers + ~25 losers), refreshed every few minutes. */
+    private val marketMovers = java.util.concurrent.ConcurrentHashMap<com.capitol.app.analysis.Universe, List<String>>()
+    private var moversJob: kotlinx.coroutines.Job? = null
 
     init {
         viewModelScope.launch {
@@ -93,9 +98,41 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     fun setHeroRange(r: ChartRange) { _state.value = _state.value.copy(heroRange = r); loadHero() }
 
     fun setMoversUniverse(u: com.capitol.app.analysis.Universe) {
-        _state.value = _state.value.copy(moversUniverse = u)
+        _state.value = _state.value.copy(moversUniverse = u, moversWholeMarket = marketMovers.containsKey(u))
         updateWatch()
         applyLive(c.live.quotes.value)
+        if (active) startMovers()
+    }
+
+    /** While visible: fetch whole-market movers now and every [MOVERS_REFRESH_MS]; live ticks re-rank them in between. */
+    private fun startMovers() {
+        moversJob?.cancel()
+        moversJob = viewModelScope.launch {
+            while (true) {
+                loadMarketMovers(_state.value.moversUniverse)
+                kotlinx.coroutines.delay(MOVERS_REFRESH_MS)
+            }
+        }
+    }
+
+    private suspend fun loadMarketMovers(u: com.capitol.app.analysis.Universe) {
+        val market = marketFor(u)
+        val result = runCatching { c.market.dayMovers(market) }
+            .onFailure { com.capitol.app.diagnostics.Diagnostics.info("Movers", "market screener failed (${market.label}): ${it.message}") }
+            .getOrNull()
+        val (g, l) = result ?: (emptyList<com.capitol.app.data.live.LiveQuote>() to emptyList())
+        if (g.isEmpty() && l.isEmpty()) {
+            // Keep any earlier whole-market list; otherwise fall back to the index constituents.
+            if (_state.value.moversUniverse == u) _state.value = _state.value.copy(moversWholeMarket = marketMovers.containsKey(u))
+            return
+        }
+        c.live.seed(g + l)
+        marketMovers[u] = (g + l).map { it.symbol.uppercase() }.distinct()
+        if (_state.value.moversUniverse == u) {
+            _state.value = _state.value.copy(moversWholeMarket = true)
+            updateWatch()
+            applyLive(c.live.quotes.value)
+        }
     }
 
     private fun loadHero(force: Boolean = false) = viewModelScope.launch {
@@ -108,10 +145,10 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     /** Called by the screen when it becomes visible / hidden: live updates only run while shown. */
     fun setActive(on: Boolean) {
         active = on
-        if (on) updateWatch() else c.live.release(OWNER)
+        if (on) { updateWatch(); startMovers() } else { moversJob?.cancel(); c.live.release(OWNER) }
     }
 
-    private fun moverSymbols(): List<String> = _state.value.moversUniverse.symbols
+    private fun moverSymbols(): List<String> = _state.value.moversUniverse.let { marketMovers[it] ?: it.symbols }
 
     private fun updateWatch() {
         if (!active) return
@@ -166,6 +203,10 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
 
     companion object {
         private const val OWNER = "home"
+        private const val MOVERS_REFRESH_MS = 5 * 60_000L
+        fun marketFor(u: com.capitol.app.analysis.Universe) =
+            if (u == com.capitol.app.analysis.Universe.US_LARGE) com.capitol.app.data.market.MoversMarket.US
+            else com.capitol.app.data.market.MoversMarket.INDIA
         val INDICES = listOf(
             MarketIndex("^NSEI", "NIFTY 50", "India"),
             MarketIndex("^BSESN", "SENSEX", "India"),

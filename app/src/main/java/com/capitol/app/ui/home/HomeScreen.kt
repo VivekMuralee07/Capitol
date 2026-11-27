@@ -447,9 +447,15 @@ private fun MoversSection(st: HomeState, onUniverse: (com.capitol.app.analysis.U
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf(com.capitol.app.analysis.Universe.NIFTY50, com.capitol.app.analysis.Universe.US_LARGE).forEach { u ->
-                FilterChip(st.moversUniverse == u, { onUniverse(u) }, { Text(u.label) })
+                FilterChip(st.moversUniverse == u, { onUniverse(u) }, { Text(HomeViewModel.marketFor(u).label) })
             }
         }
+        Text(
+            if (st.moversWholeMarket) "Whole market · excludes penny & illiquid stocks"
+            else "From ${st.moversUniverse.label} (market-wide list unavailable)",
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
         Spacer(Modifier.height(6.dp))
         if (st.gainers.isEmpty() && st.losers.isEmpty()) {
             ShimmerBox(Modifier.fillMaxWidth().height(180.dp))
