@@ -21,11 +21,7 @@ object MutualFunds {
     }
 
     fun parse(el: JsonElement): List<Holding> {
-        val arr: JsonArray = when (el) {
-            is JsonArray -> el
-            is JsonObject -> (el["data"] as? JsonArray) ?: (el["holdings"] as? JsonArray) ?: (el.values.firstOrNull { it is JsonArray } as? JsonArray) ?: return emptyList()
-            else -> return emptyList()
-        }
+        val arr: JsonArray = findRecords(el, "tradingsymbol", "isin") ?: return emptyList()
         return arr.mapNotNull { e ->
             val o = e as? JsonObject ?: return@mapNotNull null
             val isin = o.str("tradingsymbol") ?: o.str("isin") ?: return@mapNotNull null
@@ -36,6 +32,20 @@ object MutualFunds {
                 averagePrice = o.num("average_price") ?: 0.0, lastPrice = o.num("last_price") ?: o.num("average_price") ?: 0.0,
                 dayChangePercent = null, kind = AssetKind.MUTUAL_FUND, displayName = o.str("fund") ?: o.str("scheme_name"), folio = o.str("folio"),
             )
+        }
+    }
+
+    /**
+     * Finds the first array of objects having any of [keys], searching nested objects
+     * (`{"data": [...]}`, `{"data": {"holdings": [...]}}`, a bare array…).
+     */
+    fun findRecords(el: JsonElement, vararg keys: String, depth: Int = 0): JsonArray? {
+        if (depth > 5) return null
+        return when (el) {
+            is JsonArray -> if (el.any { o -> o is JsonObject && keys.any { it in o } }) el
+                else el.firstNotNullOfOrNull { findRecords(it, *keys, depth = depth + 1) }
+            is JsonObject -> el.values.firstNotNullOfOrNull { findRecords(it, *keys, depth = depth + 1) }
+            else -> null
         }
     }
 

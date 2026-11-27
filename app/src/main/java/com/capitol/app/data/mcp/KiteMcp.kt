@@ -15,8 +15,10 @@ import okhttp3.OkHttpClient
  *    tokens stored encrypted and refreshed — same flow as INDmoney.
  *  - **`login` tool** (as described in Zerodha's README): the tool returns a Kite login link and the
  *    persisted MCP session is authorised once the user logs in.
- * Capitol only uses read tools — the hosted server excludes trading operations, and Capitol
- * additionally exposes only `get_*`/`search_*`.
+ * Tools are found in the server's own list: either per-purpose tools (`get_holdings`) or
+ * mode-based ones (`portfolio`/`mutual_funds`/`orders` with `mode: "holdings"` …).
+ * Capitol is read-only: write tools are dropped, and write modes (place/modify/cancel …) are
+ * removed from schemas and refused at call time.
  */
 class KiteMcp(
     http: OkHttpClient,
@@ -77,11 +79,23 @@ class KiteMcp(
     private suspend fun rawCall(name: String, args: JsonObject): String = if (usesOAuth) oauth.call(name, args) else client.callTool(name, args)
     private suspend fun rawTools(): List<McpTool> = if (usesOAuth) oauth.tools() else client.listTools()
 
-    /** Stock holdings via `get_holdings` (Kite Connect `/portfolio/holdings` shape). */
-    suspend fun holdings(): List<Holding> = parseEquity(call(resolveTool(ToolKind.HOLDINGS)))
+    /** Stock holdings (e.g. `portfolio` with `mode: "holdings"`, or `get_holdings`). */
+    suspend fun holdings(): List<Holding> = parseEquity(callResolved(ToolKind.HOLDINGS))
 
-    /** Coin mutual-fund holdings via `get_mf_holdings`. */
-    suspend fun mfHoldings(): List<Holding> = MutualFunds.parse(call(resolveTool(ToolKind.MF_HOLDINGS)))
+    /** Coin mutual-fund holdings (e.g. `mutual_funds` with `mode: "holdings"`, or `get_mf_holdings`). */
+    suspend fun mfHoldings(): List<Holding> = MutualFunds.parse(callResolved(ToolKind.MF_HOLDINGS))
+
+    /** Calls the resolved tool; if the server rejects a mode ("Must be one of: …"), retries once with an allowed read mode. */
+    private suspend fun callResolved(kind: ToolKind): String {
+        val (name, args) = resolveTool(kind)
+        return try {
+            call { rawCall(name, args) }
+        } catch (e: McpException) {
+            val retry = retryArgs(e.message.orEmpty(), args) ?: throw e
+            com.capitol.app.diagnostics.Diagnostics.info("KiteMCP", "$name rejected $args; retrying with $retry")
+            call { rawCall(name, retry) }
+        }
+    }
 
     internal enum class ToolKind { HOLDINGS, MF_HOLDINGS }
 
@@ -90,24 +104,29 @@ class KiteMcp(
      * `get_holdings` / `get_mf_holdings`, but the sign-in-protected server can name tools differently,
      * so we match by name instead of hard-coding.
      */
-    private suspend fun resolveTool(kind: ToolKind): String {
-        val names = readTools().map { it.name }
-        return pickTool(kind, names) ?: run {
+    private suspend fun resolveTool(kind: ToolKind): Pair<String, JsonObject> {
+        val tools = readTools()
+        val names = tools.map { it.name }
+        val name = pickTool(kind, names) ?: run {
             com.capitol.app.diagnostics.Diagnostics.info("KiteMCP", "tools offered: ${names.joinToString()}")
             throw BrokerException("Zerodha's MCP server has no ${if (kind == ToolKind.MF_HOLDINGS) "mutual-fund holdings" else "holdings"} tool. " +
                 "Tools it offers: ${names.joinToString().ifBlank { "none" }}")
         }
+        return name to holdingsArgs(tools.first { it.name == name })
     }
 
-    /** Read-only tools for the AI agent. */
-    suspend fun readTools(): List<McpTool> = toolCache ?: call { rawTools() }.filter { isReadOnly(it.name) }.also { toolCache = it }
+    /**
+     * Read-only tools for the AI agent. Tools with a mode/action enum (e.g. `orders`) keep only their
+     * read modes in the schema; a tool left with no read mode is dropped.
+     */
+    suspend fun readTools(): List<McpTool> = toolCache ?: call { rawTools() }
+        .filter { isReadOnly(it.name) }.mapNotNull { restrictToReadModes(it) }.also { toolCache = it }
 
     suspend fun callRead(name: String, args: JsonObject): String {
         require(isReadOnly(name)) { "Capitol only allows read-only Kite tools" }
+        require(argsAreReadOnly(args)) { "Capitol only allows read-only Kite tools — that mode could change your account" }
         return call { rawCall(name, args) }
     }
-
-    private suspend fun call(tool: String): String = call { rawCall(tool, JsonObject(emptyMap())) }
 
     private suspend fun <T> call(block: suspend () -> T): T {
         if (!isConnected) throw BrokerException("Connect Zerodha via Kite MCP first")
@@ -150,6 +169,75 @@ class KiteMcp(
             return READ_WORDS.any { it in n }
         }
 
+        /** Argument names that select what a multi-purpose tool does. */
+        private val MODE_KEYS = setOf("mode", "action", "operation", "op", "type", "method", "command", "kind", "view")
+
+        /** A mode/action value that only reads (no write verb as a word part). */
+        internal fun isReadValue(v: String): Boolean {
+            val n = v.lowercase()
+            return WRITE_WORDS.none { it.trimEnd('_') in n.split(Regex("[^a-z0-9]+")) || it in n } && n != "login"
+        }
+
+        /** Rejects calls whose mode-like string arguments name a write action (e.g. orders with mode "place"). */
+        internal fun argsAreReadOnly(args: JsonObject): Boolean = args.all { (k, v) ->
+            val p = v as? kotlinx.serialization.json.JsonPrimitive
+            k.lowercase() !in MODE_KEYS || p == null || !p.isString || isReadValue(p.content)
+        }
+
+        private fun JsonObject.props(): JsonObject? = this["properties"] as? JsonObject
+        private fun JsonObject.enumValues(): List<String>? = (this["enum"] as? kotlinx.serialization.json.JsonArray)
+            ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+
+        /** Keeps only read-only enum values of mode-like properties; null if one has no read value left. */
+        internal fun restrictToReadModes(tool: McpTool): McpTool? {
+            val props = tool.inputSchema.props() ?: return tool
+            var changed = false
+            val newProps = props.mapValues { (k, v) ->
+                val o = v as? JsonObject ?: return@mapValues v
+                val values = o.enumValues() ?: return@mapValues v
+                if (k.lowercase() !in MODE_KEYS) return@mapValues v
+                val keep = values.filter { isReadValue(it) }
+                if (keep.size == values.size) return@mapValues v
+                if (keep.isEmpty()) return null
+                changed = true
+                JsonObject(o + ("enum" to kotlinx.serialization.json.JsonArray(keep.map { kotlinx.serialization.json.JsonPrimitive(it) })))
+            }
+            if (!changed) return tool
+            return tool.copy(inputSchema = JsonObject(tool.inputSchema + ("properties" to JsonObject(newProps))))
+        }
+
+        /** Arguments asking a tool for holdings: a mode-like enum gets "holdings"; a required mode with no enum gets "holdings" too. */
+        internal fun holdingsArgs(tool: McpTool): JsonObject {
+            val props = tool.inputSchema.props() ?: return JsonObject(emptyMap())
+            val required = (tool.inputSchema["required"] as? kotlinx.serialization.json.JsonArray)
+                ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }.orEmpty()
+            val args = mutableMapOf<String, kotlinx.serialization.json.JsonElement>()
+            for ((k, v) in props) {
+                val o = v as? JsonObject ?: continue
+                val values = o.enumValues()
+                val pick = when {
+                    values != null && (k.lowercase() in MODE_KEYS || k in required) ->
+                        values.firstOrNull { it.equals("holdings", true) } ?: values.firstOrNull { "holding" in it.lowercase() }
+                            ?: values.firstOrNull { isReadValue(it) }.takeIf { k in required }
+                    k.lowercase() in MODE_KEYS && (k in required || "holding" in o.toString().lowercase()) -> "holdings"
+                    else -> null
+                } ?: continue
+                args[k] = kotlinx.serialization.json.JsonPrimitive(pick)
+            }
+            return JsonObject(args)
+        }
+
+        /** From "Invalid mode. Must be one of: holdings[, …]" builds read-only arguments to retry with. */
+        internal fun retryArgs(error: String, args: JsonObject): JsonObject? {
+            val m = Regex("""(?i)invalid\s+([a-z_]+)\W+must be one of:?\s*([^\n]+)""").find(error) ?: return null
+            val key = m.groupValues[1].lowercase()
+            val options = m.groupValues[2].split(Regex("[,|/]| or ")).map { it.trim().trim('"', '\'', '`', '.', '[', ']') }.filter { it.isNotBlank() }
+            val pick = options.firstOrNull { it.equals("holdings", true) } ?: options.firstOrNull { "holding" in it.lowercase() }
+                ?: options.firstOrNull { isReadValue(it) } ?: return null
+            val retry = JsonObject(args + (key to kotlinx.serialization.json.JsonPrimitive(pick)))
+            return retry.takeIf { it != args }
+        }
+
         /** Picks the tool for [kind] among [names] (exact README name first, then by keywords). */
         internal fun pickTool(kind: ToolKind, names: List<String>): String? {
             fun mfToken(n: String) = Regex("(^|[_\\-.])mf([_\\-.]|$)").containsMatchIn(n)
@@ -158,6 +246,8 @@ class KiteMcp(
             return when (kind) {
                 ToolKind.HOLDINGS -> lower["get_holdings"]
                     ?: lower.entries.firstOrNull { (n, _) -> "holding" in n && !isMf(n) }?.value
+                    // Mode-based servers: a single `portfolio` tool (mode "holdings" / "positions" / …).
+                    ?: lower.entries.firstOrNull { (n, _) -> "portfolio" in n && !isMf(n) }?.value
                 ToolKind.MF_HOLDINGS -> lower["get_mf_holdings"]
                     ?: lower.entries.firstOrNull { (n, _) -> "holding" in n && isMf(n) }?.value
                     ?: lower.entries.firstOrNull { (n, _) -> (mfToken(n) || "mutual" in n) && "order" !in n && "sip" !in n && "instrument" !in n }?.value
@@ -168,7 +258,7 @@ class KiteMcp(
             val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
             val el = runCatching { json.parseToJsonElement(text.trim()) }.getOrNull()
                 ?: MutualFunds.extractJson(text)?.let { runCatching { json.parseToJsonElement(it) }.getOrNull() } ?: return emptyList()
-            val arr = (el as? kotlinx.serialization.json.JsonArray) ?: ((el as? JsonObject)?.get("data") as? kotlinx.serialization.json.JsonArray) ?: return emptyList()
+            val arr = MutualFunds.findRecords(el, "tradingsymbol") ?: return emptyList()
             fun JsonObject.s(k: String) = (this[k] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
             fun JsonObject.n(k: String) = (this[k] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()
             return arr.mapNotNull { e ->
