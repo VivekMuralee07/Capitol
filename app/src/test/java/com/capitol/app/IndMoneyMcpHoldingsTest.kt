@@ -56,4 +56,44 @@ class IndMoneyMcpHoldingsTest {
         assertTrue(IndMoneyMcp.parseHoldings("You have no holdings.", usHint = true).isEmpty())
         assertTrue(IndMoneyMcp.parseHoldings("""{"total_value":12345}""", usHint = false).isEmpty())
     }
+
+    /** The tool list INDmoney's live server returned (from a user's screenshot). */
+    @Test fun picksFromInDmoneysRealToolList() {
+        val live = listOf("indian_stocks_sips", "networth_snapshot", "networth_allocation_breakdown", "networth_holdings",
+            "get_indian_stocks_ohlc", "get_indian_stocks_details", "get_indian_stocks_movers", "get_indian_stocks_option_chain",
+            "get_indian_stocks_greeks_history", "lookup_ind_keys", "user_watchlist", "get_mf_funds_details", "get_mf_by_category",
+            "mf_sips", "get_us_stocks_details", "get_us_stocks_movers", "get_us_stocks_ohlc", "us_stocks_sips", "get_family_members",
+            "get_family_portfolio", "get_family_asset_holdings", "save_analysis")
+        val picked = IndMoneyMcp.pickHoldingToolNames(live)
+        assertEquals("networth_holdings", picked.first())
+        assertTrue(picked.toString(), picked.none { "movers" in it || "sips" in it || "ohlc" in it || "details" in it || it == "save_analysis" })
+    }
+
+    @Test fun callsOncePerStockAssetType() {
+        val tool = com.capitol.app.data.mcp.McpTool("networth_holdings", "", kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"type":"object","properties":{"asset_class":{"type":"string","enum":["indian_stocks","us_stocks","mutual_funds","gold"]}}}""") as kotlinx.serialization.json.JsonObject)
+        val plans = IndMoneyMcp.callPlans(tool)
+        assertEquals(listOf("""{"asset_class":"indian_stocks"}""" to false, """{"asset_class":"us_stocks"}""" to true),
+            plans.map { it.first.toString() to it.second })
+    }
+
+    @Test fun parsesMixedRowsTablesAndNames() {
+        // Mixed net-worth rows: only stocks kept; US flagged from the row's asset type.
+        val mixed = """{"holdings":[
+            {"asset_type":"US_STOCKS","symbol":"NVDA","quantity":1.2,"avg_price":120,"current_price":180},
+            {"asset_type":"MUTUAL_FUND","name":"Parag Parikh Flexi Cap","units":50,"nav":80},
+            {"asset_type":"INDIAN_STOCKS","name":"Infosys Ltd","quantity":4,"avg_price":1400,"ltp":1500}]}"""
+        val hs = IndMoneyMcp.parseHoldings(mixed, usHint = false)
+        assertEquals(listOf("NVDA", "INFOSYS LTD"), hs.map { it.tradingSymbol })
+        assertTrue(hs[0].isUs); assertEquals("INR", hs[1].currency); assertEquals("Infosys Ltd", hs[1].displayName)
+        // Markdown table reply.
+        val table = """Your US stocks:
+            | Symbol | Quantity | Avg Price | Current Price |
+            |---|---|---|---|
+            | MRVL | 3 | $70.10 | $88.20 |
+            | AAPL | 0.5 | $150 | $210 |"""
+        val t = IndMoneyMcp.parseHoldings(table, usHint = true)
+        assertEquals(listOf("MRVL", "AAPL"), t.map { it.tradingSymbol })
+        assertEquals(88.20, t[0].lastPrice, 1e-9); assertTrue(t.all { it.isUs })
+    }
 }

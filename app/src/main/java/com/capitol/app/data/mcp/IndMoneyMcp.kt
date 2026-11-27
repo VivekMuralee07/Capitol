@@ -44,13 +44,17 @@ class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = 
         val errors = mutableListOf<String>()
         for (name in picks) {
             val tool = tools.first { it.name == name }
-            runCatching { call(name, KiteMcp.holdingsArgs(tool)) }
-                .onSuccess { text ->
-                    val parsed = parseHoldings(text, usHint = isUsName(name))
-                    com.capitol.app.diagnostics.Diagnostics.info("INDmoneyMCP", "$name → ${parsed.size} holdings; reply starts: ${text.take(300)}")
-                    out += parsed
-                }
-                .onFailure { errors += "$name: ${it.message}" }
+            com.capitol.app.diagnostics.Diagnostics.info("INDmoneyMCP", "$name schema: ${tool.inputSchema.toString().take(600)}")
+            // A tool with an asset-type option (e.g. asset_class: us_stocks / indian_stocks / …) is called once per stock type.
+            for ((args, usArg) in callPlans(tool)) {
+                runCatching { call(name, args) }
+                    .onSuccess { text ->
+                        val parsed = parseHoldings(text, usHint = isUsName(name) || usArg)
+                        com.capitol.app.diagnostics.Diagnostics.info("INDmoneyMCP", "$name $args → ${parsed.size} holdings; reply: ${text.take(1500)}")
+                        out += parsed
+                    }
+                    .onFailure { errors += "$name $args: ${it.message}" }
+            }
         }
         if (out.isEmpty()) {
             errors.forEach { com.capitol.app.diagnostics.Diagnostics.info("INDmoneyMCP", it) }
@@ -68,6 +72,24 @@ class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = 
 
         private fun tokens(n: String) = n.lowercase().split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
         internal fun isUsName(n: String): Boolean { val t = tokens(n); return "us" in t || "usstocks" in t || "usstock" in t || "global" in t || "international" in t }
+
+        private val STOCK_VALUE = Regex("stock|equit|share")
+
+        /**
+         * Argument sets to call [tool] with: normally one (holdings mode if any). If an enum argument lists
+         * stock asset types ("us_stocks", "indian_stocks", "EQUITY"…), one call per stock value, flagged US or not.
+         */
+        internal fun callPlans(tool: McpTool): List<Pair<JsonObject, Boolean>> {
+            val base = KiteMcp.holdingsArgs(tool)
+            val props = tool.inputSchema["properties"] as? JsonObject ?: return listOf(base to false)
+            for ((k, v) in props) {
+                if (k in base) continue
+                val values = ((v as? JsonObject)?.get("enum") as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content } ?: continue
+                val stockValues = values.filter { STOCK_VALUE.containsMatchIn(it.lowercase()) && "mutual" !in it.lowercase() && KiteMcp.isReadValue(it) }
+                if (stockValues.isNotEmpty()) return stockValues.map { JsonObject(base + (k to JsonPrimitive(it))) to isUsName(it) }
+            }
+            return listOf(base to false)
+        }
 
         /**
          * Read-only tools that look like stock holdings, US-specific ones first, at most 4.
@@ -90,7 +112,8 @@ class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = 
             // Market-data tools (OHLC, quotes, details for given symbols) and non-stock products are never holdings.
             val skip = listOf("order", "transaction", "sip", "mutual", "_mf", "mf_", "fund", "watchlist", "alert", "news",
                 "snapshot", "allocation", "summary", "search", "lookup", "quote", "chart", "history", "insurance", "loan", "credit", "bank", "deposit",
-                "ohlc", "candle", "price", "detail", "info", "fundamental", "ltp", "depth", "option", "future", "ipo", "screener")
+                "ohlc", "candle", "price", "detail", "info", "fundamental", "ltp", "depth", "option", "future", "ipo", "screener",
+                "mover", "gainer", "loser", "greek", "member", "analysis", "category")
             fun score(n: String): Int {
                 val l = n.lowercase(); val t = tokens(n)
                 // Read tools only; a bare "us_stocks"-style name counts if it has no write verb.
@@ -112,12 +135,30 @@ class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = 
         private val AVG = listOf("average_price", "avg_price", "avg_buy_price", "average_buy_price", "buy_price", "avg_cost", "average_cost", "cost_price", "buy_avg")
         private val LTP = listOf("last_price", "ltp", "current_price", "market_price", "cmp", "close_price", "price")
         private val EXCHANGE = listOf("exchange", "market", "exchange_code", "segment")
+        private val NAME = listOf("name", "stock_name", "instrument_name", "asset_name", "company_name", "security_name", "display_name", "scheme_name", "title")
+        /** Per-record asset type: a US stock row in a mixed net-worth list says so here. */
+        private val ASSET_TYPE = listOf("asset_type", "asset_class", "assettype", "type", "category", "instrument_type", "asset", "segment", "market")
 
         /** Turns an MCP reply (JSON, maybe wrapped in prose) into holdings; [usHint] marks a US-only tool. */
         internal fun parseHoldings(text: String, usHint: Boolean): List<Holding> {
             val el = runCatching { json.parseToJsonElement(text.trim()) }.getOrNull()
-                ?: MutualFunds.extractJson(text)?.let { runCatching { json.parseToJsonElement(it) }.getOrNull() } ?: return emptyList()
-            return records(el).mapNotNull { (o, sectionUs) -> toHolding(o, usHint || sectionUs) }
+                ?: MutualFunds.extractJson(text)?.let { runCatching { json.parseToJsonElement(it) }.getOrNull() }
+                ?: return parseTable(text, usHint)
+            return records(el).mapNotNull { (o, sectionUs) -> toHolding(o, usHint || sectionUs) }.ifEmpty { parseTable(text, usHint) }
+        }
+
+        /** Markdown/pipe tables ("| Symbol | Qty | Avg | LTP |"), turned into records and parsed like JSON rows. */
+        internal fun parseTable(text: String, usHint: Boolean): List<Holding> {
+            val rows = text.lines().map { it.trim() }.filter { it.startsWith("|") && it.count { c -> c == '|' } >= 3 }
+                .filterNot { Regex("^\\|[\\s:|-]+\\|?$").matches(it) }
+                .map { r -> r.trim('|').split('|').map { it.trim() } }
+            if (rows.size < 2) return emptyList()
+            val header = rows.first().map { it.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_') }
+            var sectionUs = false
+            return rows.drop(1).mapNotNull { cells ->
+                if (cells.size != header.size) { sectionUs = isUsName(cells.joinToString(" ")); return@mapNotNull null }
+                toHolding(JsonObject(header.zip(cells).associate { (h, c) -> h to JsonPrimitive(c) }), usHint || sectionUs)
+            }
         }
 
         /** All objects that look like a holding, remembering whether they sat under a US-named key. */
@@ -127,7 +168,7 @@ class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = 
                 is JsonArray -> el.flatMap { records(it, us, depth + 1) }
                 is JsonObject -> {
                     val keys = el.keys.map { it.lowercase() }
-                    if (keys.any { it in SYMBOL } && keys.any { k -> QTY.any { k == it || k.startsWith(it + "_") } }) listOf(el to us)
+                    if (keys.any { it in SYMBOL || it in NAME } && keys.any { k -> QTY.any { k == it || k.startsWith(it + "_") } }) listOf(el to us)
                     else el.entries.flatMap { (k, v) -> records(v, us || isUsName(k), depth + 1) }
                 }
                 else -> emptyList()
@@ -142,10 +183,16 @@ class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = 
                 if (preferUsd) keys.firstNotNullOfOrNull { k -> lower["${k}_usd"] ?: lower["usd_$k"] }?.let { return it }
                 return keys.firstNotNullOfOrNull { lower[it] }
             }
-            val sym = (first(SYMBOL) as? JsonPrimitive)?.content?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: return null
+            val name = (first(NAME) as? JsonPrimitive)?.content?.trim()?.takeIf { it.isNotEmpty() }
+            val sym = (first(SYMBOL) as? JsonPrimitive)?.content?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
+                ?: name?.uppercase() ?: return null
             val exchangeField = (first(EXCHANGE) as? JsonPrimitive)?.content?.trim().orEmpty()
             val currency = (lower["currency"] as? JsonPrimitive)?.content?.uppercase()
-            val us = Holding.isUsExchange(exchangeField) || currency == "USD" || (usHint && currency != "INR")
+            val assetType = ASSET_TYPE.mapNotNull { (lower[it] as? JsonPrimitive)?.content?.lowercase() }.joinToString(" ")
+            // Skip non-stock rows of a mixed net-worth list (mutual funds, gold, FDs, EPF…).
+            if (assetType.isNotBlank() && listOf("mutual", "fund", "gold", "deposit", "epf", "nps", "bond", "insurance", "crypto", "cash", "real")
+                    .any { it in assetType } && !STOCK_VALUE.containsMatchIn(assetType)) return null
+            val us = Holding.isUsExchange(exchangeField) || currency == "USD" || isUsName(assetType) || (usHint && currency != "INR")
             val qty = num(first(QTY)) ?: return null
             if (qty <= 0) return null
             var avg = num(first(AVG, us))
@@ -160,7 +207,7 @@ class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = 
             }
             return Holding(Broker.INDMONEY, sym.removeSuffix(".NS").removeSuffix(".BO"), exchange, qty, avg ?: 0.0, ltp ?: avg ?: 0.0,
                 num(lower["day_change_percentage"] ?: lower["day_change_percent"] ?: lower["change_percent"]), AssetKind.EQUITY,
-                displayName = (lower["name"] as? JsonPrimitive)?.content ?: (lower["company_name"] as? JsonPrimitive)?.content)
+                displayName = name)
         }
     }
 }
