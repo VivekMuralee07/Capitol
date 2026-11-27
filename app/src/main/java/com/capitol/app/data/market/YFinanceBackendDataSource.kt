@@ -73,6 +73,21 @@ class YFinanceBackendDataSource(
         json.decodeFromString<NewsDto>(get(url.toString())).news
     }
 
+    @Serializable
+    private data class QuoteDto(val symbol: String, val price: Double, val change: Double = 0.0, val change_percent: Double = 0.0,
+                                val day_high: Double? = null, val day_low: Double? = null, val volume: Double? = null, val name: String? = null, val currency: String? = null)
+    @Serializable
+    private data class QuotesDto(val quotes: List<QuoteDto> = emptyList())
+
+    override suspend fun quotes(symbols: List<String>): List<com.capitol.app.data.live.LiveQuote> = withContext(Dispatchers.IO) {
+        if (symbols.isEmpty()) return@withContext emptyList()
+        val url = endpoint("quotes").addQueryParameter("symbols", symbols.distinct().joinToString(",")).build()
+        json.decodeFromString<QuotesDto>(get(url.toString())).quotes.map {
+            com.capitol.app.data.live.LiveQuote(it.symbol, it.price, it.change, it.change_percent, it.day_high, it.day_low, it.volume?.toLong(),
+                System.currentTimeMillis(), it.name, it.currency)
+        }
+    }
+
     private fun endpoint(path: String) = "${baseUrl().trimEnd('/')}/$path".toHttpUrl().newBuilder()
 
     private fun get(url: String): String = try {

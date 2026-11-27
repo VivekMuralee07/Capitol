@@ -46,6 +46,14 @@ class AppContainer(context: Context) {
         settings,
         java.io.File(context.cacheDir, "market"),
     )
+    private val yahooForLive = YahooFinanceDataSource(http)
+    private val backendForLive = YFinanceBackendDataSource(http) { backendUrl }
+    val live = com.capitol.app.data.live.LiveQuotes(
+        com.capitol.app.data.live.YahooStreamer(http),
+        source = {
+            if (settings.settings.first().dataSource == com.capitol.app.data.prefs.DataSourceMode.YFINANCE_SERVICE) backendForLive else yahooForLive
+        },
+    )
     val portfolio = PortfolioRepository(KiteConnectClient(http, secrets), IndMoneyClient(http, secrets))
     val indmoneyMcp = IndMoneyMcp(http, secrets)
     val agentTools = AgentTools(market, watchlist, portfolio, indmoneyMcp)

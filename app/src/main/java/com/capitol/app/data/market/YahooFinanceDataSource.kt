@@ -113,6 +113,54 @@ class YahooFinanceDataSource(
         }
     }
 
+    /** Batch quotes via `/v7/finance/quote` (crumb required), falling back to 1-day charts per symbol. */
+    override suspend fun quotes(symbols: List<String>): List<com.capitol.app.data.live.LiveQuote> = withContext(Dispatchers.IO) {
+        if (symbols.isEmpty()) return@withContext emptyList()
+        val out = mutableListOf<com.capitol.app.data.live.LiveQuote>()
+        for (chunk in symbols.distinct().chunked(40)) {
+            val got = runCatching { batchQuote(chunk) ?: batchQuote(chunk) }.getOrNull()
+            if (got != null) out += got
+            else chunk.forEach { s ->
+                runCatching { history(s, ChartRange.D1) }.getOrNull()?.let { ps ->
+                    out += com.capitol.app.data.live.LiveQuote(ps.symbol, ps.regularMarketPrice, ps.change, ps.changePercent,
+                        ps.candles.maxOfOrNull { it.high }, ps.candles.minOfOrNull { it.low }, ps.candles.sumOf { it.volume }.toLong(),
+                        (ps.candles.lastOrNull()?.time ?: 0) * 1000, ps.name, ps.currency)
+                }
+            }
+        }
+        out
+    }
+
+    private fun batchQuote(chunk: List<String>): List<com.capitol.app.data.live.LiveQuote>? {
+        val c = crumb ?: obtainCrumb() ?: return null
+        val url = "$base/v7/finance/quote".toHttpUrl().newBuilder()
+            .addQueryParameter("symbols", chunk.joinToString(",")).addQueryParameter("formatted", "false")
+            .addQueryParameter("crumb", c).build()
+        http.executeWithRetry(Request.Builder().url(url).header("User-Agent", USER_AGENT).header("Accept", "application/json").build()).use { resp ->
+            if (resp.code == 401 || resp.code == 403) { crumb = null; return null }
+            if (!resp.isSuccessful) return null
+            return parseQuotes(resp.body!!.string())
+        }
+    }
+
+    internal fun parseQuotes(body: String): List<com.capitol.app.data.live.LiveQuote> {
+        val arr = ((json.parseToJsonElement(body).jsonObject["quoteResponse"] as? JsonObject)?.get("result") as? JsonArray) ?: return emptyList()
+        return arr.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val sym = o.str("symbol") ?: return@mapNotNull null
+            val price = o.dbl("regularMarketPrice") ?: return@mapNotNull null
+            com.capitol.app.data.live.LiveQuote(
+                symbol = sym, price = price,
+                change = o.dbl("regularMarketChange") ?: 0.0, changePercent = o.dbl("regularMarketChangePercent") ?: 0.0,
+                dayHigh = o.dbl("regularMarketDayHigh"), dayLow = o.dbl("regularMarketDayLow"),
+                dayVolume = o.dbl("regularMarketVolume")?.toLong(),
+                time = (o.dbl("regularMarketTime")?.toLong() ?: 0L) * 1000,
+                name = o.str("shortName") ?: o.str("longName"), currency = o.str("currency"),
+                marketHours = when (o.str("marketState")) { "PRE" -> 0; "REGULAR" -> 1; "POST", "POSTPOST" -> 2; else -> null },
+            )
+        }
+    }
+
     private fun obtainCrumb(): String? = runCatching {
         // Same handshake as yfinance: get Yahoo's consent cookie, then exchange it for a crumb.
         http.newCall(Request.Builder().url(cookieUrl).header("User-Agent", USER_AGENT).build()).execute().close()

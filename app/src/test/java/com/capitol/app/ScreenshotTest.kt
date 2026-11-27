@@ -70,6 +70,12 @@ class ScreenshotTest {
             loading = false, hero = hero, indices = idx,
             watch = watch.map { QuoteSnapshot(it.symbol, it.name, it.regularMarketPrice, it.change, it.changePercent, it.currency, it.closes.takeLast(40)) },
             signals = watch.map { TechnicalAnalyzer.analyze(it, IndicatorType.DEFAULTS) }.sortedByDescending { it.compositeScore },
+            heroRange = com.capitol.app.data.market.ChartRange.M3,
+            streaming = true, lastTick = 1_764_241_200_000L,
+            gainers = listOf("TATAMOTORS.NS" to 4.82, "ADANIENT.NS" to 3.91, "BEL.NS" to 3.12, "TRENT.NS" to 2.64, "SBIN.NS" to 2.05)
+                .map { (s, p) -> com.capitol.app.data.live.LiveQuote(s, 800.0 + p * 37, p * 8, p) },
+            losers = listOf("INFY.NS" to -3.44, "WIPRO.NS" to -2.81, "HCLTECH.NS" to -2.10, "TECHM.NS" to -1.72, "CIPLA.NS" to -1.05)
+                .map { (s, p) -> com.capitol.app.data.live.LiveQuote(s, 1500.0 + p * 41, p * 12, p) },
         )
     }
 

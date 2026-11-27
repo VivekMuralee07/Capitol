@@ -87,6 +87,26 @@ def history(
     return {"symbol": symbol, **_meta(symbol), "price": price, "previous_close": prev, "candles": candles}
 
 
+@app.get("/quotes")
+def quotes(symbols: str = Query(..., min_length=1, max_length=2000)) -> dict[str, Any]:
+    """Latest price and day change for many symbols (yfinance fast_info)."""
+    out = []
+    for sym in [s.strip().upper() for s in symbols.split(",") if s.strip()][:100]:
+        try:
+            fi = yf.Ticker(sym).fast_info
+            price, prev = _num(fi.last_price), _num(fi.previous_close)
+            if price is None:
+                continue
+            change = price - prev if prev else 0.0
+            out.append({"symbol": sym, "price": price, "change": change,
+                        "change_percent": (change / prev * 100) if prev else 0.0,
+                        "day_high": _num(fi.day_high), "day_low": _num(fi.day_low),
+                        "volume": _num(fi.last_volume), "currency": fi.currency})
+        except Exception:
+            continue
+    return {"quotes": out}
+
+
 @app.get("/search")
 def search(q: str = Query(..., min_length=1, max_length=64)) -> dict[str, Any]:
     try:

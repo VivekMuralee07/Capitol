@@ -44,6 +44,8 @@ data class AnalysisState(
     val tradeCapital: Double = 100_000.0,
     val tradeRiskPct: Double = 1.0,
     val tradePlan: com.capitol.app.analysis.TradePlan? = null,
+    val streaming: Boolean = false,
+    val lastTick: Long? = null,
 ) {
     /** True when the daily and weekly verdicts point the same way. */
     val timeframesAligned: Boolean? get() = timeframes.takeIf { it.size >= 2 }?.map { it.second.verdict }?.let { v ->
@@ -62,12 +64,46 @@ object Presets {
 
 @OptIn(FlowPreview::class)
 class AnalysisViewModel(private val c: AppContainer) : ViewModel() {
+    private companion object { const val OWNER = "analysis" }
     private val _state = MutableStateFlow(AnalysisState())
     val state: StateFlow<AnalysisState> = _state.asStateFlow()
     private val queries = MutableStateFlow("")
     private var loadJob: Job? = null
 
+    private var active = false
+    private var lastRecompute = 0L
+
+    /** Live updates only while the screen is visible. */
+    fun setActive(on: Boolean) {
+        active = on
+        val sym = _state.value.symbol
+        if (on && sym != null) c.live.watch(OWNER, listOf(sym)) else c.live.release(OWNER)
+    }
+
+    private fun liveBucket(r: ChartRange): Long = when {
+        r.interval.endsWith("m") -> r.interval.dropLast(1).toLong() * 60
+        r.interval.endsWith("h") -> r.interval.dropLast(1).toLong() * 3600
+        r.interval == "1d" -> 86_400L
+        else -> Long.MAX_VALUE // weekly+: only update the latest bar
+    }
+
+    private fun onLive(quotes: Map<String, com.capitol.app.data.live.LiveQuote>) {
+        val st = _state.value
+        val s = st.series ?: return
+        val q = quotes[s.symbol] ?: return
+        val merged = com.capitol.app.data.live.LiveCandles.merge(s, q, liveBucket(st.range))
+        if (merged === s) return
+        _state.value = st.copy(series = merged, lastTick = q.time)
+        // Indicators are heavier: recompute at most every 10 seconds.
+        val now = System.currentTimeMillis()
+        if (now - lastRecompute > 10_000) { lastRecompute = now; recompute() }
+    }
+
+    override fun onCleared() { c.live.release(OWNER) }
+
     init {
+        viewModelScope.launch { c.live.quotes.collect { onLive(it) } }
+        viewModelScope.launch { c.live.streaming.collect { _state.value = _state.value.copy(streaming = it) } }
         viewModelScope.launch {
             val st = c.settings.settings.first()
             _state.value = _state.value.copy(selected = st.defaultIndicators, params = st.indicatorParams,
@@ -104,6 +140,7 @@ class AnalysisViewModel(private val c: AppContainer) : ViewModel() {
             fundamentals = null, news = emptyList(), backtest = null, timeframes = emptyList())
         load()
         loadExtras(s)
+        if (active) c.live.watch(OWNER, listOf(s))
     }
 
     fun setRange(r: ChartRange) { _state.value = _state.value.copy(range = r); load() }

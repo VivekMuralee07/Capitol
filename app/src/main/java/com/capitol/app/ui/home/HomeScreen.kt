@@ -11,6 +11,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -73,6 +74,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.capitol.app.analysis.AnalysisReport
 import com.capitol.app.analysis.Signal
 import com.capitol.app.data.market.QuoteSnapshot
+import com.capitol.app.data.market.isIntraday
 import com.capitol.app.ui.components.AnimatedNumber
 import com.capitol.app.ui.components.CapitolCard
 import com.capitol.app.ui.components.ChangeText
@@ -103,8 +105,18 @@ fun HomeScreen(
     onOpenScreener: () -> Unit = {},
 ) {
     val st by vm.state.collectAsStateWithLifecycle()
-    com.capitol.app.ui.components.AutoRefreshDuringMarketHours { vm.refresh(force = true) }
-    HomeContent(st, isDark, onToggleTheme, { vm.refresh(force = true) }, vm::selectHero, onOpenSymbol, onOpenAgent, onOpenPortfolio, onOpenSettings, onOpenScreener)
+    // Live quotes run only while Home is on screen.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    androidx.compose.runtime.DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_START) vm.setActive(true)
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_STOP) vm.setActive(false)
+        }
+        lifecycle.addObserver(obs)
+        onDispose { lifecycle.removeObserver(obs); vm.setActive(false) }
+    }
+    HomeContent(st, isDark, onToggleTheme, { vm.refresh(force = true) }, vm::selectHero, onOpenSymbol, onOpenAgent, onOpenPortfolio, onOpenSettings, onOpenScreener,
+        onHeroRange = vm::setHeroRange, onMoversUniverse = vm::setMoversUniverse)
 }
 
 /** Stateless home page, rendered from [HomeState] (also used by screenshot tests). */
@@ -120,6 +132,8 @@ fun HomeContent(
     onOpenPortfolio: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenScreener: () -> Unit = {},
+    onHeroRange: (com.capitol.app.data.market.ChartRange) -> Unit = {},
+    onMoversUniverse: (com.capitol.app.analysis.Universe) -> Unit = {},
 ) {
     @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
     androidx.compose.material3.pulltorefresh.PullToRefreshBox(isRefreshing = st.loading && st.hero != null, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
@@ -133,7 +147,7 @@ fun HomeContent(
             }
             item { TickerTape(st.indices.map { it.second } + st.watch, onOpenSymbol) }
             st.error?.let { item { ErrorBanner(it) } }
-            item { Staggered(0) { HeroCard(st, onSelectHero, onOpenSymbol) } }
+            item { Staggered(0) { HeroCard(st, onSelectHero, onOpenSymbol, onHeroRange) } }
             item { Staggered(1) { MoodCard(st) } }
             item { Staggered(2) { QuickActions(onOpenSymbol = { onOpenSymbol(st.heroIndex.symbol) }, onOpenAgent, onOpenPortfolio, onOpenScreener) } }
             item { SectionTitle("Global markets") }
@@ -145,6 +159,7 @@ fun HomeContent(
                     if (st.indices.isEmpty() && st.loading) items(4) { ShimmerBox(Modifier.size(160.dp, 120.dp)) }
                 }
             }
+            item { MoversSection(st, onMoversUniverse, onOpenSymbol) }
             if (st.signals.isNotEmpty()) {
                 item { SectionTitle("Watchlist signal heatmap") }
                 item { SignalHeatmap(st.signals, onOpenSymbol) }
@@ -233,7 +248,7 @@ private fun TickerTape(quotes: List<QuoteSnapshot>, onOpen: (String) -> Unit) {
 }
 
 @Composable
-private fun HeroCard(st: HomeState, onSelect: (MarketIndex) -> Unit, onOpen: (String) -> Unit) {
+private fun HeroCard(st: HomeState, onSelect: (MarketIndex) -> Unit, onOpen: (String) -> Unit, onRange: (com.capitol.app.data.market.ChartRange) -> Unit) {
     val mc = CapitolColors.market
     val hero = st.hero
     val t = rememberInfiniteTransition(label = "live")
@@ -251,13 +266,19 @@ private fun HeroCard(st: HomeState, onSelect: (MarketIndex) -> Unit, onOpen: (St
                 Text(st.heroIndex.label, style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.width(8.dp))
                 Text(st.heroIndex.region, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.weight(1f))
+                com.capitol.app.ui.components.LiveBadge(st.streaming, st.lastTick, marketOpen(st.heroIndex))
             }
             Spacer(Modifier.height(6.dp))
             if (hero != null) {
                 AnimatedNumber(hero.regularMarketPrice, fontSize = 34)
                 ChangeText(hero.change, hero.changePercent, fontSize = 15)
                 Spacer(Modifier.height(10.dp))
-                PriceChart(hero.candles, mode = PriceChartMode.LINE, height = 190.dp)
+                PriceChart(hero.candles, mode = PriceChartMode.LINE, height = 190.dp, intraday = st.heroRange.isIntraday)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(st.heroRange == com.capitol.app.data.market.ChartRange.D1, { onRange(com.capitol.app.data.market.ChartRange.D1) }, { Text("1D · live") })
+                    FilterChip(st.heroRange == com.capitol.app.data.market.ChartRange.M3, { onRange(com.capitol.app.data.market.ChartRange.M3) }, { Text("3M") })
+                }
             } else {
                 ShimmerBox(Modifier.fillMaxWidth().height(240.dp))
             }
@@ -332,7 +353,7 @@ private fun IndexCard(idx: MarketIndex, q: QuoteSnapshot, onClick: () -> Unit) {
         Text(idx.label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
         Text(idx.region, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(6.dp))
-        AnimatedNumber(q.price, fontSize = 17)
+        com.capitol.app.ui.components.FlashingPrice(q.price, fontSize = 17)
         Text("%+.2f%%".format(q.changePercent), color = changeColor(q.change), style = NumberStyle.copy(fontSize = 12.sp))
         Spacer(Modifier.height(6.dp))
         Sparkline(q.sparkline, Modifier.fillMaxWidth().height(36.dp))
@@ -402,4 +423,57 @@ fun ShimmerBox(modifier: Modifier) {
             )
         )
     )
+}
+
+/** Whether the market the index trades on is open now (crypto trades around the clock). */
+private fun marketOpen(i: MarketIndex): Boolean = when (i.region) {
+    "India" -> com.capitol.app.data.market.MarketHours.indiaOpen()
+    "US" -> com.capitol.app.data.market.MarketHours.usOpen()
+    "Crypto" -> true
+    else -> com.capitol.app.data.market.MarketHours.anyOpen()
+}
+
+@Composable
+private fun MoversSection(st: HomeState, onUniverse: (com.capitol.app.analysis.Universe) -> Unit, onOpen: (String) -> Unit) {
+    val open = if (st.moversUniverse == com.capitol.app.analysis.Universe.US_LARGE) com.capitol.app.data.market.MarketHours.usOpen()
+        else com.capitol.app.data.market.MarketHours.indiaOpen()
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)) {
+            Text("Today's top movers", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            com.capitol.app.ui.components.LiveBadge(st.streaming, st.lastTick, open)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(com.capitol.app.analysis.Universe.NIFTY50, com.capitol.app.analysis.Universe.US_LARGE).forEach { u ->
+                FilterChip(st.moversUniverse == u, { onUniverse(u) }, { Text(u.label) })
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        if (st.gainers.isEmpty() && st.losers.isEmpty()) {
+            ShimmerBox(Modifier.fillMaxWidth().height(180.dp))
+        } else Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            MoversColumn("Top gainers", st.gainers, CapitolColors.market.bull, Modifier.weight(1f), onOpen)
+            MoversColumn("Top losers", st.losers, CapitolColors.market.bear, Modifier.weight(1f), onOpen)
+        }
+    }
+}
+
+@Composable
+private fun MoversColumn(title: String, quotes: List<com.capitol.app.data.live.LiveQuote>, color: Color, modifier: Modifier, onOpen: (String) -> Unit) {
+    CapitolCard(modifier, padding = PaddingValues(10.dp)) {
+        Text(title, style = MaterialTheme.typography.labelLarge, color = color)
+        Spacer(Modifier.height(4.dp))
+        if (quotes.isEmpty()) Text("None today", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        quotes.forEachIndexed { i, q ->
+            androidx.compose.animation.AnimatedContent(q.symbol, label = "mover$i",
+                transitionSpec = { (fadeIn(tween(300)) + slideInVertically { it / 2 }) togetherWith androidx.compose.animation.fadeOut(tween(200)) }) { sym ->
+                Row(Modifier.fillMaxWidth().clickable { onOpen(sym) }.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(sym.substringBefore('.'), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        com.capitol.app.ui.components.FlashingPrice(q.price, fontSize = 11)
+                    }
+                    Text("%+.2f%%".format(q.changePercent), style = NumberStyle.copy(fontSize = 12.sp), color = color)
+                }
+            }
+        }
+    }
 }

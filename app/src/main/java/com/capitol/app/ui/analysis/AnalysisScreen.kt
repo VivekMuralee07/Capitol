@@ -107,6 +107,15 @@ import kotlinx.coroutines.launch
 @Composable
 fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onCompare: (String) -> Unit = {}, onAskAi: (String) -> Unit) {
     val st by vm.state.collectAsStateWithLifecycle()
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    androidx.compose.runtime.DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_START) vm.setActive(true)
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_STOP) vm.setActive(false)
+        }
+        lifecycle.addObserver(obs)
+        onDispose { lifecycle.removeObserver(obs); vm.setActive(false) }
+    }
     LaunchedEffect(initialSymbol) { if (initialSymbol != null && initialSymbol != st.symbol) vm.open(initialSymbol) }
     var showFilter by rememberSaveable { mutableStateOf(false) }
     var chartMode by rememberSaveable { mutableStateOf(PriceChartMode.CANDLES) }
@@ -133,8 +142,13 @@ fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onCompare: (St
                         Text(series.name, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text("${series.symbol} · ${series.exchange} · ${series.currency}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(4.dp))
-                        AnimatedNumber(series.regularMarketPrice, fontSize = 28)
+                        com.capitol.app.ui.components.FlashingPrice(series.regularMarketPrice, fontSize = 28)
                         ChangeText(series.change, series.changePercent)
+                        com.capitol.app.ui.components.LiveBadge(st.streaming, st.lastTick,
+                            if (series.symbol.endsWith(".NS") || series.symbol.endsWith(".BO") || series.symbol.startsWith("^NSE") || series.symbol == "^BSESN")
+                                com.capitol.app.data.market.MarketHours.indiaOpen()
+                            else if (series.symbol.endsWith("-USD")) true else com.capitol.app.data.market.MarketHours.usOpen(),
+                            Modifier.padding(top = 2.dp))
                     }
                     ShareMenu(st)
                     IconButton(vm::refresh) { Icon(Icons.Default.Refresh, "Refresh") }
