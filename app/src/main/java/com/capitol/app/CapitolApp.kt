@@ -55,8 +55,8 @@ class AppContainer(context: Context) {
         },
     )
     val kiteMcp = com.capitol.app.data.mcp.KiteMcp(http, secrets)
-    val portfolio = PortfolioRepository(KiteConnectClient(http, secrets), IndMoneyClient(http, secrets), kiteMcp)
     val indmoneyMcp = IndMoneyMcp(http, secrets)
+    val portfolio = PortfolioRepository(KiteConnectClient(http, secrets), IndMoneyClient(http, secrets), kiteMcp, indmoneyMcp)
     val agentTools = AgentTools(market, watchlist, portfolio, indmoneyMcp, kiteMcp)
     val agent = CapitolAgent(secrets, agentTools)
     init { agentTools.analyticsLoader = { h -> com.capitol.app.analysis.PortfolioLoader.load(this, h) } }

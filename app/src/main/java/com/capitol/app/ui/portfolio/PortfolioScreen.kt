@@ -111,7 +111,7 @@ class PortfolioViewModel(val c: AppContainer) : ViewModel() {
     fun saveIndToken(token: String) { c.secrets.put(Key.INDMONEY_ACCESS_TOKEN, token); refresh() }
     fun indDisconnect() { ind.disconnect(); refresh() }
 
-    // INDmoney via its official MCP server (OAuth sign-in; used by the AI agent).
+    // INDmoney via its official MCP server (OAuth sign-in): holdings in the Portfolio tab + AI agent tools.
     val mcp get() = c.indmoneyMcp
     val mcpBusy = MutableStateFlow(false)
     fun beginMcpLogin(onUrl: (String) -> Unit) = viewModelScope.launch {
@@ -122,11 +122,11 @@ class PortfolioViewModel(val c: AppContainer) : ViewModel() {
     fun completeMcpLogin(redirect: String) = viewModelScope.launch {
         mcpBusy.value = true
         runCatching { mcp.completeLogin(redirect); mcp.tools() }
-            .onSuccess { message.value = "Connected to INDmoney · the AI agent can now read your INDmoney portfolio (${it.size} tools)" }
+            .onSuccess { message.value = "Connected to INDmoney · loading your Indian and US stocks"; refresh() }
             .onFailure { com.capitol.app.diagnostics.Diagnostics.error("Portfolio", it.message ?: "error", it); message.value = it.message }
         mcpBusy.value = false
     }
-    fun mcpDisconnect() { mcp.disconnect(); message.value = "Disconnected INDmoney MCP" }
+    fun mcpDisconnect() { mcp.disconnect(); message.value = "Disconnected INDmoney MCP"; refresh() }
 
     // Zerodha via Kite MCP (login tool; no API key needed). Includes Coin mutual funds.
     val kiteMcp get() = c.kiteMcp
@@ -362,7 +362,7 @@ private fun IndMoneyMcpCard(vm: PortfolioViewModel, onLogin: (String) -> Unit, o
         }
         Spacer(Modifier.height(4.dp))
         if (vm.mcp.isConnected) {
-            Text("Connected. The AI agent can read your INDmoney portfolio — Indian and US stocks — and analyse it.",
+            Text("Connected. Your INDmoney Indian and US stocks show in this tab (pull to refresh), and the AI agent can analyse them.",
                 style = MaterialTheme.typography.bodySmall)
             Row {
                 Button({ onAskAi("Using my INDmoney account, list my holdings (including US stocks) and give a technical review of the biggest positions.") }) {

@@ -28,6 +28,7 @@ class PortfolioRepository(
     val kite: KiteConnectClient,
     val indmoney: IndMoneyClient,
     val kiteMcp: com.capitol.app.data.mcp.KiteMcp? = null,
+    val indmoneyMcp: com.capitol.app.data.mcp.IndMoneyMcp? = null,
 ) {
     private val _state = MutableStateFlow(PortfolioState())
     val state: StateFlow<PortfolioState> = _state.asStateFlow()
@@ -42,7 +43,14 @@ class PortfolioRepository(
                 else -> Result.success(emptyList())
             }
         }
-        val i = async { if (indmoney.isConnected) runCatching { indmoney.holdings() } else Result.success(emptyList()) }
+        // INDmoney: the MCP sign-in (Indian + US stocks) when connected, otherwise the INDstocks API token.
+        val i = async {
+            when {
+                indmoneyMcp?.isConnected == true -> runCatching { indmoneyMcp.holdings() }
+                indmoney.isConnected -> runCatching { indmoney.holdings() }
+                else -> Result.success(emptyList())
+            }
+        }
         // Coin mutual funds: from the Kite Connect API when connected, otherwise via Kite MCP.
         val mf = async {
             when {
@@ -74,5 +82,6 @@ class PortfolioRepository(
         return parsed.size
     }
 
-    val anyConnected get() = kite.isConnected || indmoney.isConnected || kiteMcp?.isConnected == true || imported.isNotEmpty()
+    val anyConnected get() = kite.isConnected || indmoney.isConnected || kiteMcp?.isConnected == true ||
+        indmoneyMcp?.isConnected == true || imported.isNotEmpty()
 }
