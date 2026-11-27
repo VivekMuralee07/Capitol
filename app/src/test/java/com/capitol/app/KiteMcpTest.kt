@@ -240,4 +240,70 @@ class KiteMcpTest {
             assertTrue(runCatching { conn2.beginLogin() }.exceptionOrNull()?.message.orEmpty().isNotEmpty())
         }
     }
+
+    @Test fun picksToolsByNameAndKeepsReadOnly() {
+        val readme = listOf("login", "get_holdings", "get_mf_holdings", "get_funds", "place_order")
+        assertEquals("get_holdings", KiteMcp.pickTool(KiteMcp.ToolKind.HOLDINGS, readme))
+        assertEquals("get_mf_holdings", KiteMcp.pickTool(KiteMcp.ToolKind.MF_HOLDINGS, readme))
+        val prefixed = listOf("kite_get_profile", "kite_get_holdings", "kite_get_mf_holdings", "kite_place_order")
+        assertEquals("kite_get_holdings", KiteMcp.pickTool(KiteMcp.ToolKind.HOLDINGS, prefixed))
+        assertEquals("kite_get_mf_holdings", KiteMcp.pickTool(KiteMcp.ToolKind.MF_HOLDINGS, prefixed))
+        val other = listOf("portfolio-holdings", "mutual_fund_holdings", "get_funds", "mf_orders")
+        assertEquals("portfolio-holdings", KiteMcp.pickTool(KiteMcp.ToolKind.HOLDINGS, other))
+        assertEquals("mutual_fund_holdings", KiteMcp.pickTool(KiteMcp.ToolKind.MF_HOLDINGS, other))
+        // Margin "funds" or MF orders are never mistaken for MF holdings.
+        assertEquals(null, KiteMcp.pickTool(KiteMcp.ToolKind.MF_HOLDINGS, listOf("get_funds", "get_margins", "get_mf_orders", "get_mf_sips")))
+        // Read-only filter: any write verb is refused, whatever the prefix.
+        listOf("get_holdings", "kite_get_mf_holdings", "search_instruments", "get_orders", "list_positions").forEach { assertTrue(it, KiteMcp.isReadOnly(it)) }
+        listOf("place_order", "kite_place_order", "modify_order", "cancel_order", "delete_gtt_order", "place_gtt_order",
+            "exit_position", "convert_position", "login", "kite_login", "mf_sip_create", "buy_stock").forEach { assertFalse(it, KiteMcp.isReadOnly(it)) }
+    }
+
+    /** The sign-in-protected server can name tools differently from the README; Capitol finds them by name. */
+    @Test fun usesServersOwnToolNames() = runBlocking {
+        MockWebServer().use { server ->
+            var listed = listOf("kite_get_holdings", "kite_get_mf_holdings", "kite_place_order")
+            val called = mutableListOf<String>()
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    if (request.method != "POST") return MockResponse().setResponseCode(404)
+                    val msg = json.parseToJsonElement(request.body.readUtf8()).jsonObject
+                    val id = msg["id"]
+                    fun ok(s: String) = MockResponse().setHeader("Content-Type", "application/json").setBody(s)
+                    return when (msg["method"]!!.jsonPrimitive.content) {
+                        "initialize" -> ok("""{"jsonrpc":"2.0","id":$id,"result":{"protocolVersion":"2025-06-18","capabilities":{}}}""").setHeader("Mcp-Session-Id", "t1")
+                        "notifications/initialized" -> MockResponse().setResponseCode(202)
+                        "tools/list" -> ok("""{"jsonrpc":"2.0","id":$id,"result":{"tools":[${listed.joinToString { "{\"name\":\"$it\",\"inputSchema\":{\"type\":\"object\"}}" }}]}}""")
+                        else -> {
+                            val name = msg["params"]!!.jsonObject["name"]!!.jsonPrimitive.content
+                            called += name
+                            val text = when {
+                                name == "login" -> "Open https://kite.zerodha.com/connect/login?v=3 to log in"
+                                name == "get_profile" -> """{"user_id":"AB1234"}"""
+                                "mf" in name -> MF_JSON
+                                "holdings" in name -> """[{"tradingsymbol":"INFY","exchange":"NSE","quantity":5,"average_price":1400,"last_price":1500}]"""
+                                else -> "ok"
+                            }
+                            if (name !in listed && name !in listOf("login", "get_profile"))
+                                ok("""{"jsonrpc":"2.0","id":$id,"error":{"code":-32602,"message":"unknown tool \"$name\""}}""")
+                            else ok("""{"jsonrpc":"2.0","id":$id,"result":{"content":[{"type":"text","text":${Json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(text))}}]}}""")
+                        }
+                    }
+                }
+            }
+            val secrets = SecretStore(ApplicationProvider.getApplicationContext())
+            val kite = KiteMcp(OkHttpClient(), secrets, server.url("/mcp").toString())
+            kite.beginLogin(); kite.completeLogin()
+            assertEquals(5.0, kite.holdings().single().quantity, 0.0)
+            assertEquals("INF879O01027", kite.mfHoldings().single().tradingSymbol)
+            assertTrue("kite_get_holdings" in called && "kite_get_mf_holdings" in called)
+            assertFalse("kite_place_order" in called)
+            // No MF tool at all → the error lists what the server offers.
+            listed = listOf("kite_get_holdings", "kite_get_profile")
+            val fresh = KiteMcp(OkHttpClient(), secrets, server.url("/mcp").toString())
+            val msg = runCatching { fresh.mfHoldings() }.exceptionOrNull()?.message.orEmpty()
+            assertTrue(msg, msg.contains("no mutual-fund holdings tool") && msg.contains("kite_get_profile"))
+            kite.disconnect()
+        }
+    }
 }
