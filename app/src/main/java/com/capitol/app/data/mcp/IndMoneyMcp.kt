@@ -64,6 +64,21 @@ class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = 
         // The same stock can appear in an overall and a market-specific tool: keep one per symbol + market.
         return out.distinctBy { it.tradingSymbol.uppercase() to it.isUs }
     }
+    /**
+     * Credit card bills from the liabilities section of INDmoney's net-worth snapshot (`networth_snapshot`).
+     * Empty when the server has no such tool or reports no cards.
+     */
+    suspend fun creditCards(): List<com.capitol.app.data.broker.CreditCardBill> {
+        val tools = conn.tools()
+        val tool = tools.firstOrNull { it.name.equals("networth_snapshot", true) }
+            ?: tools.firstOrNull { val n = it.name.lowercase(); ("snapshot" in n || "liabilit" in n || "credit_card" in n) && KiteMcp.isReadValue(n) && canCallWithoutInput(it) }
+            ?: return emptyList()
+        val text = call(tool.name, KiteMcp.holdingsArgs(tool))
+        val cards = com.capitol.app.data.broker.CreditCards.parse(text)
+        com.capitol.app.diagnostics.Diagnostics.info("INDmoneyMCP", "${tool.name} → ${cards.size} credit cards")
+        return cards
+    }
+
     companion object {
         const val SERVER_URL = "https://mcp.indmoney.com/mcp"
         const val REDIRECT_URI = "capitol://indmoney-callback"

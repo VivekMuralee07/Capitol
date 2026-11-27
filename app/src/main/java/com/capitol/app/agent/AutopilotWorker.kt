@@ -80,6 +80,16 @@ class AutopilotWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(
                 }
             }
 
+        // Credit card bill reminders (INDmoney): once 3 days before the due date and once on the day.
+        if (c.indmoneyMcp.isConnected) {
+            runCatching { c.indmoneyMcp.creditCards() }.getOrDefault(emptyList()).forEach { card ->
+                cardReminder(card)?.let { (stage, text) ->
+                    val k = "card|${card.label}|${card.dueDate}|$stage"
+                    if (!prefs.getBoolean(k, false)) { changes += text; prefs.edit().putBoolean(k, true).apply() }
+                }
+            }
+        }
+
         com.capitol.app.widget.WatchlistWidget.refresh(applicationContext)
         if (changes.isNotEmpty()) {
             val body = c.agent.digest("Watchlist changes since last scan:\n" + changes.joinToString("\n"))
@@ -100,6 +110,18 @@ class AutopilotWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .build()
             wm.enqueueUniquePeriodicWork(WORK, ExistingPeriodicWorkPolicy.UPDATE, req)
+        }
+
+        /** (stage, message) when [card] needs a reminder today: "soon" within 3 days, "today" on the due date. */
+        fun cardReminder(card: com.capitol.app.data.broker.CreditCardBill, today: java.time.LocalDate = java.time.LocalDate.now()): Pair<String, String>? {
+            if (card.totalDue <= 0) return null
+            val days = card.daysUntilDue(today) ?: return null
+            val amt = "₹" + "%,.0f".format(card.totalDue)
+            return when (days) {
+                0L -> "today" to "${card.label}: $amt credit card bill is due today"
+                in 1L..3L -> "soon" to "${card.label}: $amt credit card bill due in $days day${if (days > 1) "s" else ""} (${card.dueDate})"
+                else -> null
+            }
         }
 
         fun ensureChannel(context: Context) {

@@ -182,6 +182,9 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
         }
         msg?.let { item { Text(it, color = MaterialTheme.colorScheme.primary) } }
         st.errors.forEach { e -> item { ErrorBanner(e) } }
+        if (st.cards.isNotEmpty()) item { CreditCardsCard(st.cards) {
+            onAskAi("Using INDmoney, look at my credit card bills (networth_snapshot liabilities): amounts, due dates, and which to pay first.")
+        } }
         if (st.holdings.isNotEmpty()) {
             item { SummaryCard(st.totalsByCurrency) {
                 onAskAi("Review my portfolio holdings technically. Which positions look strongest and weakest, and what levels should I watch?")
@@ -256,6 +259,43 @@ private fun SummaryCard(totals: List<CurrencyTotal>, onAskAi: () -> Unit) {
         }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onAskAi) { Icon(Icons.Default.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text("AI portfolio review") }
+    }
+}
+
+/** Credit card bills from INDmoney — read-only; pay in your bank or INDmoney app. */
+@Composable
+private fun CreditCardsCard(cards: List<com.capitol.app.data.broker.CreditCardBill>, onAskAi: () -> Unit) {
+    CapitolCard {
+        Text("Credit card bills · INDmoney", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        AnimatedNumber(cards.sumOf { it.totalDue }, fontSize = 28, format = { "₹%,.2f".format(it) })
+        Text("Total due across ${cards.size} card${if (cards.size > 1) "s" else ""}", style = MaterialTheme.typography.bodySmall)
+        cards.forEach { c ->
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(c.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    val days = c.daysUntilDue()
+                    val pre = c.last4?.let { "••$it · " } ?: ""
+                    val (txt, col) = when {
+                        c.totalDue <= 0 -> "${pre}nothing due" to MaterialTheme.colorScheme.onSurfaceVariant
+                        days == null -> pre.removeSuffix(" · ") to MaterialTheme.colorScheme.onSurfaceVariant
+                        days < 0 -> "${pre}overdue by ${-days} day${if (days < -1) "s" else ""}" to CapitolColors.market.bear
+                        days == 0L -> "${pre}due today" to CapitolColors.market.bear
+                        days <= 3 -> "${pre}due in $days day${if (days > 1) "s" else ""}" to CapitolColors.market.bear
+                        else -> "${pre}due ${c.dueDate!!.format(java.time.format.DateTimeFormatter.ofPattern("d MMM"))} (in $days days)" to MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Text(txt, style = MaterialTheme.typography.bodySmall, color = col)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("₹%,.2f".format(c.totalDue), style = NumberStyle.copy(fontSize = 14.sp))
+                    c.minDue?.let { Text("min ₹%,.0f".format(it), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("Read-only — pay in your bank or INDmoney app. Autopilot reminds you 3 days before and on the due date.",
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton(onAskAi) { Icon(Icons.Default.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text("Ask AI") }
     }
 }
 
