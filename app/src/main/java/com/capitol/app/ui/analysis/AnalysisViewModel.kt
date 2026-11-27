@@ -46,6 +46,8 @@ data class AnalysisState(
     val tradePlan: com.capitol.app.analysis.TradePlan? = null,
     val streaming: Boolean = false,
     val lastTick: Long? = null,
+    /** Live price/day change for the open symbol (the chart itself isn't modified). */
+    val liveQuote: com.capitol.app.data.live.LiveQuote? = null,
 ) {
     /** True when the daily and weekly verdicts point the same way. */
     val timeframesAligned: Boolean? get() = timeframes.takeIf { it.size >= 2 }?.map { it.second.verdict }?.let { v ->
@@ -71,7 +73,6 @@ class AnalysisViewModel(private val c: AppContainer) : ViewModel() {
     private var loadJob: Job? = null
 
     private var active = false
-    private var lastRecompute = 0L
 
     /** Live updates only while the screen is visible. */
     fun setActive(on: Boolean) {
@@ -80,23 +81,10 @@ class AnalysisViewModel(private val c: AppContainer) : ViewModel() {
         if (on && sym != null) c.live.watch(OWNER, listOf(sym)) else c.live.release(OWNER)
     }
 
-    private fun liveBucket(r: ChartRange): Long = when {
-        r.interval.endsWith("m") -> r.interval.dropLast(1).toLong() * 60
-        r.interval.endsWith("h") -> r.interval.dropLast(1).toLong() * 3600
-        r.interval == "1d" -> 86_400L
-        else -> Long.MAX_VALUE // weekly+: only update the latest bar
-    }
-
     private fun onLive(quotes: Map<String, com.capitol.app.data.live.LiveQuote>) {
-        val st = _state.value
-        val s = st.series ?: return
-        val q = quotes[s.symbol] ?: return
-        val merged = com.capitol.app.data.live.LiveCandles.merge(s, q, liveBucket(st.range))
-        if (merged === s) return
-        _state.value = st.copy(series = merged, lastTick = q.time)
-        // Indicators are heavier: recompute at most every 10 seconds.
-        val now = System.currentTimeMillis()
-        if (now - lastRecompute > 10_000) { lastRecompute = now; recompute() }
+        val sym = _state.value.series?.symbol ?: return
+        val q = quotes[sym] ?: return
+        if (q != _state.value.liveQuote) _state.value = _state.value.copy(liveQuote = q, lastTick = q.time)
     }
 
     override fun onCleared() { c.live.release(OWNER) }
@@ -137,7 +125,7 @@ class AnalysisViewModel(private val c: AppContainer) : ViewModel() {
         val s = symbol.trim().uppercase()
         if (s.isEmpty()) return
         _state.value = _state.value.copy(symbol = s, query = "", suggestions = emptyList(),
-            fundamentals = null, news = emptyList(), backtest = null, timeframes = emptyList())
+            fundamentals = null, news = emptyList(), backtest = null, timeframes = emptyList(), liveQuote = null, lastTick = null)
         load()
         loadExtras(s)
         if (active) c.live.watch(OWNER, listOf(s))

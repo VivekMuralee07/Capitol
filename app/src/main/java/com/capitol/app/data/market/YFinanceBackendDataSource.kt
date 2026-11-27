@@ -38,7 +38,7 @@ class YFinanceBackendDataSource(
     override suspend fun history(symbol: String, range: ChartRange): PriceSeries = withContext(Dispatchers.IO) {
         val url = endpoint("history")
             .addQueryParameter("symbol", symbol.trim().uppercase())
-            .addQueryParameter("period", range.period)
+            .apply { range.days?.let { addQueryParameter("days", it.toString()) } ?: addQueryParameter("period", range.period) }
             .addQueryParameter("interval", range.interval)
             .build()
         val dto = json.decodeFromString<HistoryDto>(get(url.toString()))

@@ -271,13 +271,16 @@ private fun HeroCard(st: HomeState, onSelect: (MarketIndex) -> Unit, onOpen: (St
             }
             Spacer(Modifier.height(6.dp))
             if (hero != null) {
-                AnimatedNumber(hero.regularMarketPrice, fontSize = 34)
-                ChangeText(hero.change, hero.changePercent, fontSize = 15)
+                // Live price and day change; the chart below stays as loaded.
+                val q = st.heroQuote
+                com.capitol.app.ui.components.FlashingPrice(q?.price ?: hero.regularMarketPrice, fontSize = 34)
+                if (q != null) ChangeText(q.change, q.changePercent, fontSize = 15) else ChangeText(hero.change, hero.changePercent, fontSize = 15)
                 Spacer(Modifier.height(10.dp))
                 PriceChart(hero.candles, mode = PriceChartMode.LINE, height = 190.dp, intraday = st.heroRange.isIntraday)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(st.heroRange == com.capitol.app.data.market.ChartRange.D1, { onRange(com.capitol.app.data.market.ChartRange.D1) }, { Text("1D · live") })
-                    FilterChip(st.heroRange == com.capitol.app.data.market.ChartRange.M3, { onRange(com.capitol.app.data.market.ChartRange.M3) }, { Text("3M") })
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(com.capitol.app.data.market.ChartRange.PICKER) { r ->
+                        FilterChip(st.heroRange == r, { onRange(r) }, { Text(r.label) })
+                    }
                 }
             } else {
                 ShimmerBox(Modifier.fillMaxWidth().height(240.dp))
