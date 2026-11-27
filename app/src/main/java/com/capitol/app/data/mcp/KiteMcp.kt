@@ -67,6 +67,7 @@ class KiteMcp(
             secrets.put(Key.MCP_KITE_CONNECTED, "1")
         }
         toolCache = null
+        runCatching { rawTools() }.onSuccess { t -> com.capitol.app.diagnostics.Diagnostics.info("KiteMCP", "connected; tools offered: ${t.joinToString { it.name }}") }
     }
 
     fun disconnect() {
@@ -77,10 +78,26 @@ class KiteMcp(
     private suspend fun rawTools(): List<McpTool> = if (usesOAuth) oauth.tools() else client.listTools()
 
     /** Stock holdings via `get_holdings` (Kite Connect `/portfolio/holdings` shape). */
-    suspend fun holdings(): List<Holding> = parseEquity(call("get_holdings"))
+    suspend fun holdings(): List<Holding> = parseEquity(call(resolveTool(ToolKind.HOLDINGS)))
 
     /** Coin mutual-fund holdings via `get_mf_holdings`. */
-    suspend fun mfHoldings(): List<Holding> = MutualFunds.parse(call("get_mf_holdings"))
+    suspend fun mfHoldings(): List<Holding> = MutualFunds.parse(call(resolveTool(ToolKind.MF_HOLDINGS)))
+
+    internal enum class ToolKind { HOLDINGS, MF_HOLDINGS }
+
+    /**
+     * Finds the server's tool for [kind] from its own tool list. Zerodha's README documents
+     * `get_holdings` / `get_mf_holdings`, but the sign-in-protected server can name tools differently,
+     * so we match by name instead of hard-coding.
+     */
+    private suspend fun resolveTool(kind: ToolKind): String {
+        val names = readTools().map { it.name }
+        return pickTool(kind, names) ?: run {
+            com.capitol.app.diagnostics.Diagnostics.info("KiteMCP", "tools offered: ${names.joinToString()}")
+            throw BrokerException("Zerodha's MCP server has no ${if (kind == ToolKind.MF_HOLDINGS) "mutual-fund holdings" else "holdings"} tool. " +
+                "Tools it offers: ${names.joinToString().ifBlank { "none" }}")
+        }
+    }
 
     /** Read-only tools for the AI agent. */
     suspend fun readTools(): List<McpTool> = toolCache ?: call { rawTools() }.filter { isReadOnly(it.name) }.also { toolCache = it }
@@ -117,7 +134,35 @@ class KiteMcp(
         private const val EXPIRED = "Your Zerodha session has expired (Kite logins last a day). Tap Connect to log in again."
 
         /** Only read tools — never order placement/modification, even if a server exposes them. */
-        fun isReadOnly(name: String) = name.startsWith("get_") || name.startsWith("search_")
+        private val WRITE_WORDS = listOf("place", "modify", "cancel", "delete", "create", "update", "exit", "convert",
+            "buy", "sell", "transfer", "withdraw", "pledge", "redeem", "sip_", "invest", "submit", "execute", "trade_")
+        private val READ_WORDS = listOf("get", "list", "search", "fetch", "view", "read", "show", "holding", "position",
+            "profile", "margin", "quote", "ltp", "ohlc", "historical", "instrument", "portfolio", "fund", "order", "trades")
+
+        /**
+         * Read-only tools only. A name with any write verb is refused even if it also contains a read word
+         * (e.g. "place_order", "kite_cancel_order"); others must look like a read.
+         */
+        fun isReadOnly(name: String): Boolean {
+            val n = name.lowercase()
+            if (n == "login" || n.endsWith("_login")) return false
+            if (WRITE_WORDS.any { it in n }) return false
+            return READ_WORDS.any { it in n }
+        }
+
+        /** Picks the tool for [kind] among [names] (exact README name first, then by keywords). */
+        internal fun pickTool(kind: ToolKind, names: List<String>): String? {
+            fun mfToken(n: String) = Regex("(^|[_\\-.])mf([_\\-.]|$)").containsMatchIn(n)
+            fun isMf(n: String) = mfToken(n) || "mutual" in n || "fund" in n
+            val lower = names.associateBy { it.lowercase() }
+            return when (kind) {
+                ToolKind.HOLDINGS -> lower["get_holdings"]
+                    ?: lower.entries.firstOrNull { (n, _) -> "holding" in n && !isMf(n) }?.value
+                ToolKind.MF_HOLDINGS -> lower["get_mf_holdings"]
+                    ?: lower.entries.firstOrNull { (n, _) -> "holding" in n && isMf(n) }?.value
+                    ?: lower.entries.firstOrNull { (n, _) -> (mfToken(n) || "mutual" in n) && "order" !in n && "sip" !in n && "instrument" !in n }?.value
+            }
+        }
 
         internal fun parseEquity(text: String): List<Holding> {
             val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
