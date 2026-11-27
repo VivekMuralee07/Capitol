@@ -10,3 +10,9 @@ interface MarketDataSource {
 }
 
 class MarketDataException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/** A whole market for the day's top movers (Yahoo screener region + exchanges). */
+enum class MoversMarket(val label: String, val region: String, val exchanges: List<String>, val minPrice: Double) {
+    INDIA("India (NSE)", "in", listOf("NSI"), 5.0),
+    US("US", "us", emptyList(), 5.0),
+}

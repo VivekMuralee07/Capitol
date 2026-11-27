@@ -68,6 +68,9 @@ class LiveQuotes(
         runCatching { source().quotes(symbols) }.getOrNull()?.forEach { merge(it) }
     }
 
+    /** Adds quotes fetched elsewhere (e.g. the market screener) so they show at once and keep updating live. */
+    fun seed(quotes: Collection<LiveQuote>) = quotes.forEach { merge(it.copy(symbol = it.symbol.uppercase())) }
+
     internal fun merge(q: LiveQuote) {
         _quotes.update { m ->
             val old = m[q.symbol]

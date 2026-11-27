@@ -13,6 +13,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
@@ -151,13 +153,48 @@ class YahooFinanceDataSource(
         }
     }
 
+    /**
+     * Today's biggest gainers and losers across a whole market, from Yahoo's equity screener: the
+     * same `POST /v1/finance/screener` query yfinance's `yf.screen("day_gainers")` sends. Filters
+     * match Yahoo's predefined day_gainers/day_losers (market cap ≥ 2B, price ≥ 5, some volume) so
+     * illiquid penny stocks don't crowd the list. Returns up to [count] candidates per side.
+     */
+    suspend fun dayMovers(market: MoversMarket, count: Int = 25): Pair<List<com.capitol.app.data.live.LiveQuote>, List<com.capitol.app.data.live.LiveQuote>> =
+        withContext(Dispatchers.IO) { screen(market, gainers = true, count) to screen(market, gainers = false, count) }
+
+    private fun screen(market: MoversMarket, gainers: Boolean, count: Int): List<com.capitol.app.data.live.LiveQuote> {
+        val body = screenerQuery(market, gainers, count).toString()
+            .toRequestBody("application/json".toMediaType())
+        repeat(2) {
+            val c = crumb ?: obtainCrumb() ?: throw MarketDataException("Couldn't get a Yahoo session for the market screener")
+            val url = "$base/v1/finance/screener".toHttpUrl().newBuilder()
+                .addQueryParameter("crumb", c).addQueryParameter("formatted", "false")
+                .addQueryParameter("lang", "en-US").addQueryParameter("region", "US").build()
+            http.executeWithRetry(Request.Builder().url(url).post(body).header("User-Agent", USER_AGENT)
+                .header("Accept", "application/json").build()).use { resp ->
+                if (resp.code == 401 || resp.code == 403) { crumb = null; return@repeat }
+                if (!resp.isSuccessful) throw MarketDataException("Yahoo screener: HTTP ${resp.code}")
+                return parseScreener(resp.body!!.string())
+            }
+        }
+        throw MarketDataException("Yahoo screener refused the request")
+    }
+
+    internal fun parseScreener(body: String): List<com.capitol.app.data.live.LiveQuote> {
+        val result = ((json.parseToJsonElement(body).jsonObject["finance"] as? JsonObject)?.get("result") as? JsonArray)
+            ?.firstOrNull() as? JsonObject ?: return emptyList()
+        return (result["quotes"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.let(::quoteFrom) }.orEmpty()
+    }
+
     internal fun parseQuotes(body: String): List<com.capitol.app.data.live.LiveQuote> {
         val arr = ((json.parseToJsonElement(body).jsonObject["quoteResponse"] as? JsonObject)?.get("result") as? JsonArray) ?: return emptyList()
-        return arr.mapNotNull { el ->
-            val o = el as? JsonObject ?: return@mapNotNull null
-            val sym = o.str("symbol") ?: return@mapNotNull null
-            val price = o.dbl("regularMarketPrice") ?: return@mapNotNull null
-            com.capitol.app.data.live.LiveQuote(
+        return arr.mapNotNull { (it as? JsonObject)?.let(::quoteFrom) }
+    }
+
+    private fun quoteFrom(o: JsonObject): com.capitol.app.data.live.LiveQuote? {
+            val sym = o.str("symbol") ?: return null
+            val price = o.dbl("regularMarketPrice") ?: return null
+            return com.capitol.app.data.live.LiveQuote(
                 symbol = sym, price = price,
                 change = o.dbl("regularMarketChange") ?: 0.0, changePercent = o.dbl("regularMarketChangePercent") ?: 0.0,
                 dayHigh = o.dbl("regularMarketDayHigh"), dayLow = o.dbl("regularMarketDayLow"),
@@ -166,7 +203,6 @@ class YahooFinanceDataSource(
                 name = o.str("shortName") ?: o.str("longName"), currency = o.str("currency"),
                 marketHours = when (o.str("marketState")) { "PRE" -> 0; "REGULAR" -> 1; "POST", "POSTPOST" -> 2; else -> null },
             )
-        }
     }
 
     private fun obtainCrumb(): String? = runCatching {
@@ -271,6 +307,29 @@ class YahooFinanceDataSource(
 
     companion object {
         private const val BASE = "https://query2.finance.yahoo.com"
+
+        /** yfinance EquityQuery JSON: {"operator": "AND", "operands": [...]}. */
+        private fun q(op: String, vararg operands: Any): JsonObject = JsonObject(mapOf(
+            "operator" to JsonPrimitive(op),
+            "operands" to JsonArray(operands.map { when (it) { is JsonObject -> it; is Number -> JsonPrimitive(it); else -> JsonPrimitive(it.toString()) } }),
+        ))
+
+        internal fun screenerQuery(market: MoversMarket, gainers: Boolean, count: Int): JsonObject {
+            val filters = mutableListOf<Any>(
+                if (gainers) q("GT", "percentchange", 0) else q("LT", "percentchange", 0),
+                q("EQ", "region", market.region),
+                q("GTE", "intradaymarketcap", 2_000_000_000L),
+                q("GTE", "intradayprice", market.minPrice),
+                q("GT", "dayvolume", 15_000),
+            )
+            if (market.exchanges.isNotEmpty()) filters += q("OR", *market.exchanges.map { q("EQ", "exchange", it) }.toTypedArray())
+            return JsonObject(mapOf(
+                "offset" to JsonPrimitive(0), "size" to JsonPrimitive(count),
+                "sortField" to JsonPrimitive("percentchange"), "sortType" to JsonPrimitive(if (gainers) "DESC" else "ASC"),
+                "quoteType" to JsonPrimitive("EQUITY"), "userId" to JsonPrimitive(""), "userIdType" to JsonPrimitive("guid"),
+                "query" to q("AND", *filters.toTypedArray()),
+            ))
+        }
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
     }
