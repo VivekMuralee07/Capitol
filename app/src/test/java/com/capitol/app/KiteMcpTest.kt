@@ -155,6 +155,7 @@ class KiteMcpTest {
     @Test fun kiteMcpOAuthMode() = runBlocking {
         MockWebServer().use { server ->
             var issued = false
+            val registered = mutableListOf<String>()
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     val base = server.url("/").toString().trimEnd('/')
@@ -164,7 +165,13 @@ class KiteMcpTest {
                     return when {
                         path == "/.well-known/oauth-protected-resource/mcp" -> ok("""{"resource":"$base/mcp","authorization_servers":["$base"]}""")
                         path == "/.well-known/oauth-authorization-server" -> ok("""{"issuer":"$base","authorization_endpoint":"$base/oauth/authorize","token_endpoint":"$base/oauth/token","registration_endpoint":"$base/oauth/register"}""")
-                        path == "/oauth/register" -> ok("""{"client_id":"capitol"}""")
+                        path == "/oauth/register" -> {
+                            // Like Zerodha: only HTTPS or HTTP-loopback redirects are accepted.
+                            val uris = json.parseToJsonElement(body).jsonObject["redirect_uris"].toString()
+                            registered += uris
+                            if (uris.contains("https://") || uris.contains("http://127.0.0.1")) ok("""{"client_id":"capitol"}""")
+                            else MockResponse().setResponseCode(400).setBody("""{"error":"invalid_redirect_uri","error_description":"Use an HTTPS redirect URI or an HTTP loopback callback."}""")
+                        }
                         path == "/oauth/token" -> { issued = true; ok("""{"access_token":"kite-at","refresh_token":"kite-rt","expires_in":86400}""") }
                         path == "/mcp" -> {
                             if (request.getHeader("Authorization") != "Bearer kite-at") return MockResponse().setResponseCode(401)
@@ -186,14 +193,51 @@ class KiteMcpTest {
             val kite = KiteMcp(OkHttpClient(), secrets, server.url("/mcp").toString())
             val authUrl = kite.beginLogin()
             assertTrue(kite.usesOAuth)
-            assertTrue(authUrl.contains("/oauth/authorize") && authUrl.contains(java.net.URLEncoder.encode(KiteMcp.REDIRECT_URI, "UTF-8")))
+            // Loopback redirect registered first (Zerodha refuses capitol://), used in the authorize URL.
+            assertEquals(1, registered.size); assertTrue(registered.single().contains(KiteMcp.LOOPBACK_REDIRECT_URI))
+            assertEquals(KiteMcp.LOOPBACK_REDIRECT_URI, authUrl.toHttpUrl().queryParameter("redirect_uri"))
+            assertTrue(KiteMcp.isRedirect("${KiteMcp.LOOPBACK_REDIRECT_URI}?code=abc"))
             val state = authUrl.toHttpUrl().queryParameter("state")!!
-            kite.completeLogin("${KiteMcp.REDIRECT_URI}?code=abc&state=$state")
+            kite.completeLogin("${KiteMcp.LOOPBACK_REDIRECT_URI}?code=abc&state=$state")
             assertTrue(issued && kite.isConnected)
             assertEquals("INF879O01027", kite.mfHoldings().single().tradingSymbol)
             assertEquals(listOf("get_mf_holdings"), kite.readTools().map { it.name })
             kite.disconnect()
             assertFalse(kite.isConnected)
+        }
+    }
+
+    /** A server that refuses capitol:// gets the next redirect (loopback) automatically. */
+    @Test fun oauthFallsBackToLoopbackWhenAppSchemeIsRefused() = runBlocking {
+        MockWebServer().use { server ->
+            val tried = mutableListOf<String>()
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    val base = server.url("/").toString().trimEnd('/')
+                    fun ok(s: String) = MockResponse().setHeader("Content-Type", "application/json").setBody(s)
+                    return when (request.requestUrl!!.encodedPath) {
+                        "/.well-known/oauth-protected-resource/mcp" -> ok("""{"resource":"$base/mcp","authorization_servers":["$base"]}""")
+                        "/.well-known/oauth-authorization-server" -> ok("""{"authorization_endpoint":"$base/a","token_endpoint":"$base/t","registration_endpoint":"$base/r"}""")
+                        "/r" -> {
+                            val uri = json.parseToJsonElement(request.body.readUtf8()).jsonObject["redirect_uris"].toString()
+                            tried += uri
+                            if (uri.contains("capitol://")) MockResponse().setResponseCode(400).setBody("""{"error":"invalid_redirect_uri"}""")
+                            else ok("""{"client_id":"c"}""")
+                        }
+                        else -> MockResponse().setResponseCode(404)
+                    }
+                }
+            }
+            val secrets = SecretStore(ApplicationProvider.getApplicationContext())
+            val conn = com.capitol.app.data.mcp.OAuthMcp(OkHttpClient(), secrets, server.url("/mcp").toString(), "TEST_OAUTH",
+                listOf("capitol://x-callback", "http://127.0.0.1:43217/x-callback"), "TestBroker")
+            val url = conn.beginLogin().toHttpUrl()
+            assertEquals(2, tried.size)
+            assertEquals("http://127.0.0.1:43217/x-callback", url.queryParameter("redirect_uri"))
+            assertEquals("http://127.0.0.1:43217/x-callback", conn.redirectUri)
+            // A non-redirect error is reported with the provider name, not retried.
+            val conn2 = com.capitol.app.data.mcp.OAuthMcp(OkHttpClient(), secrets, "http://127.0.0.1:1/mcp", "TEST2", listOf("capitol://y"), "TestBroker")
+            assertTrue(runCatching { conn2.beginLogin() }.exceptionOrNull()?.message.orEmpty().isNotEmpty())
         }
     }
 }

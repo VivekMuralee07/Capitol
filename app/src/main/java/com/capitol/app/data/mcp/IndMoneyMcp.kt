@@ -9,7 +9,8 @@ import okhttp3.OkHttpClient
  * Uses the same stored keys as earlier versions, so existing sign-ins keep working.
  */
 class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = SERVER_URL) {
-    private val conn = OAuthMcp(http, secrets, serverUrl, keyPrefix = "MCP_INDMONEY", redirectUri = REDIRECT_URI)
+    private val conn = OAuthMcp(http, secrets, serverUrl, keyPrefix = "MCP_INDMONEY",
+        redirectUris = listOf(REDIRECT_URI, LOOPBACK_REDIRECT_URI), providerName = "INDmoney")
 
     val isConnected get() = conn.isConnected
     suspend fun beginLogin(): String = conn.beginLogin()
@@ -21,6 +22,7 @@ class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = 
     companion object {
         const val SERVER_URL = "https://mcp.indmoney.com/mcp"
         const val REDIRECT_URI = "capitol://indmoney-callback"
-        fun isRedirect(url: String) = url.startsWith(REDIRECT_URI)
+        const val LOOPBACK_REDIRECT_URI = "http://127.0.0.1:43217/indmoney-callback"
+        fun isRedirect(url: String) = url.startsWith(REDIRECT_URI) || url.startsWith(LOOPBACK_REDIRECT_URI)
     }
 }

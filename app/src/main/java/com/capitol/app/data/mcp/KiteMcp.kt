@@ -27,7 +27,9 @@ class KiteMcp(
         override fun load() = secrets.get(Key.MCP_KITE_SESSION)
         override fun save(id: String?) = secrets.put(Key.MCP_KITE_SESSION, id)
     })
-    private val oauth = OAuthMcp(http, secrets, serverUrl, keyPrefix = "MCP_KITE_OAUTH", redirectUri = REDIRECT_URI)
+    // Zerodha requires an HTTPS or HTTP-loopback redirect (it refuses capitol://), so loopback goes first.
+    private val oauth = OAuthMcp(http, secrets, serverUrl, keyPrefix = "MCP_KITE_OAUTH",
+        redirectUris = listOf(LOOPBACK_REDIRECT_URI, REDIRECT_URI), providerName = "Zerodha")
     private var toolCache: List<McpTool>? = null
 
     /** True when the last sign-in used MCP OAuth (vs. the `login` tool). */
@@ -49,7 +51,7 @@ class KiteMcp(
             }
         } catch (e: McpException) {
             throw BrokerException(if (e.unauthorized)
-                "Zerodha's Kite MCP server requires sign-in, but its OAuth setup couldn't be used: ${oauthErr?.message ?: "unknown error"}"
+                "Zerodha sign-in couldn't start: ${oauthErr?.message ?: "unknown error"}"
             else "Couldn't reach Zerodha's Kite MCP server: ${e.message}")
         }
         return extractUrl(text) ?: throw BrokerException("Kite MCP didn't return a login link: ${text.take(200)}")
@@ -108,8 +110,10 @@ class KiteMcp(
         const val SERVER_URL = "https://mcp.kite.trade/mcp"
         const val PREFIX = "kite__"
         const val REDIRECT_URI = "capitol://kite-mcp-callback"
+        /** RFC 8252 loopback redirect; intercepted by the in-app sign-in WebView, never actually loaded. */
+        const val LOOPBACK_REDIRECT_URI = "http://127.0.0.1:43217/kite-mcp-callback"
         private const val MODE_KEY = "MCP_KITE_MODE"
-        fun isRedirect(url: String) = url.startsWith(REDIRECT_URI)
+        fun isRedirect(url: String) = url.startsWith(REDIRECT_URI) || url.startsWith(LOOPBACK_REDIRECT_URI)
         private const val EXPIRED = "Your Zerodha session has expired (Kite logins last a day). Tap Connect to log in again."
 
         /** Only read tools — never order placement/modification, even if a server exposes them. */
