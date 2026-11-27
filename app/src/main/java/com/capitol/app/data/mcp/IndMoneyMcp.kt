@@ -36,9 +36,10 @@ class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = 
      */
     suspend fun holdings(): List<Holding> {
         val tools = conn.tools()
-        val picks = pickHoldingTools(tools.map { it.name })
+        val picks = pickHoldingTools(tools)
         com.capitol.app.diagnostics.Diagnostics.info("INDmoneyMCP", "tools offered: ${tools.joinToString { it.name }}; using: ${picks.joinToString()}")
-        if (picks.isEmpty()) throw BrokerException("INDmoney's MCP server has no holdings tool. Tools it offers: ${tools.joinToString { it.name }.ifBlank { "none" }}")
+        val offered = tools.joinToString { it.name }.ifBlank { "none" }
+        if (picks.isEmpty()) throw BrokerException("INDmoney's MCP server has no holdings tool Capitol recognises. Tools it offers: $offered")
         val out = mutableListOf<Holding>()
         val errors = mutableListOf<String>()
         for (name in picks) {
@@ -51,9 +52,11 @@ class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = 
                 }
                 .onFailure { errors += "$name: ${it.message}" }
         }
-        if (out.isEmpty() && errors.isNotEmpty()) throw BrokerException("INDmoney: ${errors.joinToString("; ")}")
-        if (out.isEmpty()) throw BrokerException("INDmoney returned no stock holdings Capitol could read (tools tried: ${picks.joinToString()}). " +
-            "Settings → Diagnostics has a sample of the reply.")
+        if (out.isEmpty()) {
+            errors.forEach { com.capitol.app.diagnostics.Diagnostics.info("INDmoneyMCP", it) }
+            throw BrokerException("INDmoney returned no stock holdings Capitol could read (tried: ${picks.joinToString()}" +
+                (if (errors.isNotEmpty()) "; ${errors.size} failed" else "") + "). Tools it offers: $offered. Settings → Diagnostics has the details.")
+        }
         // The same stock can appear in an overall and a market-specific tool: keep one per symbol + market.
         return out.distinctBy { it.tradingSymbol.uppercase() to it.isUs }
     }
@@ -70,9 +73,24 @@ class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = 
          * Read-only tools that look like stock holdings, US-specific ones first, at most 4.
          * Mutual funds, orders, transactions, SIPs and net-worth summaries are skipped.
          */
-        internal fun pickHoldingTools(names: List<String>): List<String> {
+        /** Tool-level pick: name heuristics plus "every required argument can be filled" (so no market-data tools needing symbols). */
+        internal fun pickHoldingTools(tools: List<McpTool>): List<String> {
+            val byName = tools.associateBy { it.name }
+            return pickHoldingToolNames(tools.map { it.name }).filter { n -> byName[n]?.let(::canCallWithoutInput) ?: true }
+        }
+
+        /** True when every required argument is supplied by [KiteMcp.holdingsArgs] (e.g. a mode), i.e. no symbols/ids needed. */
+        internal fun canCallWithoutInput(tool: McpTool): Boolean {
+            val required = (tool.inputSchema["required"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty()
+            val filled = KiteMcp.holdingsArgs(tool).keys
+            return required.all { it in filled }
+        }
+
+        internal fun pickHoldingToolNames(names: List<String>): List<String> {
+            // Market-data tools (OHLC, quotes, details for given symbols) and non-stock products are never holdings.
             val skip = listOf("order", "transaction", "sip", "mutual", "_mf", "mf_", "fund", "watchlist", "alert", "news",
-                "snapshot", "allocation", "summary", "search", "lookup", "quote", "chart", "history", "insurance", "loan", "credit", "bank", "deposit")
+                "snapshot", "allocation", "summary", "search", "lookup", "quote", "chart", "history", "insurance", "loan", "credit", "bank", "deposit",
+                "ohlc", "candle", "price", "detail", "info", "fundamental", "ltp", "depth", "option", "future", "ipo", "screener")
             fun score(n: String): Int {
                 val l = n.lowercase(); val t = tokens(n)
                 // Read tools only; a bare "us_stocks"-style name counts if it has no write verb.
@@ -82,7 +100,7 @@ class IndMoneyMcp(http: OkHttpClient, secrets: SecretStore, serverUrl: String = 
                 val stockish = "stock" in l || "equit" in l || "share" in l
                 // Names made only of market + stock words ("us_stocks", "indian_equities") count as holdings tools.
                 val bareStocks = t.isNotEmpty() && t.all { it in setOf("us", "usstocks", "indian", "india", "global", "my", "stock", "stocks", "equity", "equities", "shares") }
-                if (!holdingish && !bareStocks && !(stockish && ("get" in t || "detail" in l || "details" in t || "list" in t))) return -1
+                if (!holdingish && !bareStocks && !(stockish && ("get" in t || "list" in t))) return -1
                 return (if (isUsName(n)) 4 else 0) + (if (holdingish) 2 else 0) + (if (stockish) 1 else 0)
             }
             return names.map { it to score(it) }.filter { it.second >= 0 }.sortedByDescending { it.second }.take(4).map { it.first }

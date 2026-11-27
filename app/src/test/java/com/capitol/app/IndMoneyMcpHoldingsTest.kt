@@ -11,9 +11,22 @@ class IndMoneyMcpHoldingsTest {
     @Test fun picksHoldingToolsUsFirstAndSkipsOthers() {
         val names = listOf("networth_snapshot", "networth_allocation_breakdown", "networth_holdings", "get_us_stocks_details",
             "lookup_ind_keys", "place_order", "get_mf_holdings", "get_transactions", "us_stocks")
-        assertEquals(listOf("get_us_stocks_details", "us_stocks", "networth_holdings"), IndMoneyMcp.pickHoldingTools(names))
-        assertEquals(listOf("get_holdings"), IndMoneyMcp.pickHoldingTools(listOf("get_holdings", "cancel_order", "sell_stock")))
-        assertTrue(IndMoneyMcp.pickHoldingTools(listOf("networth_snapshot", "search_stocks", "buy_us_stock")).isEmpty())
+        assertEquals(listOf("us_stocks", "networth_holdings"), IndMoneyMcp.pickHoldingToolNames(names))
+        // Market-data tools seen on INDmoney's server are never treated as holdings.
+        assertTrue(IndMoneyMcp.pickHoldingToolNames(listOf("get_us_stocks_details", "get_us_stocks_ohlc", "get_us_stock_price")).isEmpty())
+        assertEquals(listOf("get_holdings"), IndMoneyMcp.pickHoldingToolNames(listOf("get_holdings", "cancel_order", "sell_stock")))
+        assertTrue(IndMoneyMcp.pickHoldingToolNames(listOf("networth_snapshot", "search_stocks", "buy_us_stock")).isEmpty())
+    }
+
+    /** A tool that needs symbols (INDmoney's market-data tools) is skipped even if its name looks like holdings. */
+    @Test fun skipsToolsNeedingInput() {
+        fun tool(name: String, schema: String) = com.capitol.app.data.mcp.McpTool(name, "", kotlinx.serialization.json.Json.parseToJsonElement(schema) as kotlinx.serialization.json.JsonObject)
+        val tools = listOf(
+            tool("get_us_stocks", """{"type":"object","properties":{"symbols":{"type":"array"}},"required":["symbols"]}"""),
+            tool("us_holdings", """{"type":"object","properties":{"mode":{"type":"string","enum":["holdings","orders"]}},"required":["mode"]}"""),
+            tool("networth_holdings", """{"type":"object","properties":{}}"""),
+        )
+        assertEquals(listOf("us_holdings", "networth_holdings"), IndMoneyMcp.pickHoldingTools(tools))
     }
 
     @Test fun parsesUsToolPreferringUsdFields() {
