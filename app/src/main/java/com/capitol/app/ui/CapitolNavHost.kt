@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -84,14 +85,25 @@ fun CapitolNavHost(c: AppContainer, isDark: Boolean, nav: NavHostController = re
 
     Scaffold(
         bottomBar = {
-            if (current !in setOf("settings", "compare", "calendar", "screener")) NavigationBar {
-                TABS.forEach { t ->
-                    NavigationBarItem(
-                        selected = current == t.route,
-                        onClick = { go(t.route) },
-                        icon = { Icon(t.icon, t.label) },
-                        label = { Text(t.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    )
+            if (current !in setOf("settings", "compare", "calendar", "screener")) Column {
+                // Flat bar on the canvas colour with a hairline on top; the accent marks only the active tab.
+                androidx.compose.material3.HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
+                    TABS.forEach { t ->
+                        NavigationBarItem(
+                            selected = current == t.route,
+                            onClick = { go(t.route) },
+                            icon = { Icon(t.icon, t.label) },
+                            label = { Text(t.label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall) },
+                            colors = androidx.compose.material3.NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                                indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                        )
+                    }
                 }
             }
         },

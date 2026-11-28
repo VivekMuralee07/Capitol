@@ -103,13 +103,7 @@ fun ScreenerScreen(vm: ScreenerViewModel, onBack: () -> Unit, onOpen: (String) -
     var addMenu by remember { mutableStateOf(false) }
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-                Column {
-                    Text("Screener", style = MaterialTheme.typography.headlineMedium)
-                    Text("Find stocks matching your setup", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
+            com.capitol.app.ui.components.ScreenHeader("Screener", subtitle = "Find stocks matching your setup", onBack = onBack)
         }
         item {
             Text("Presets", style = MaterialTheme.typography.labelLarge)

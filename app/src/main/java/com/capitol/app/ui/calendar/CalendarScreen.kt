@@ -64,13 +64,7 @@ fun CalendarScreen(vm: CalendarViewModel, onBack: () -> Unit, onOpen: (String) -
     val fmt = SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault())
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-                Column {
-                    Text("Earnings & dividends", style = MaterialTheme.typography.headlineSmall)
-                    Text("Next 90 days for all your watchlists", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
+            com.capitol.app.ui.components.ScreenHeader("Earnings & dividends", subtitle = "Next 90 days for all your watchlists", onBack = onBack)
             if (st.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         }
         if (!st.loading && st.events.isEmpty()) item {

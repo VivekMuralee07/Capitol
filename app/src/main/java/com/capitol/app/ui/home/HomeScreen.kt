@@ -15,6 +15,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -137,7 +138,7 @@ fun HomeContent(
 ) {
     @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
     androidx.compose.material3.pulltorefresh.PullToRefreshBox(isRefreshing = st.loading && st.hero != null, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
-        AuroraBackground()
+        TopGlow()
         LazyColumn(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -167,7 +168,14 @@ fun HomeContent(
             if (st.watch.isNotEmpty()) {
                 val movers = st.watch.sortedByDescending { kotlin.math.abs(it.changePercent) }.take(6)
                 item { SectionTitle("Top movers on your watchlist") }
-                itemsIndexed(movers) { i, q -> Staggered(i) { MoverRow(q) { onOpenSymbol(q.symbol) } } }
+                item {
+                    CapitolCard(padding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
+                        movers.forEachIndexed { i, q ->
+                            if (i > 0) com.capitol.app.ui.components.RowDivider()
+                            MoverRow(q) { onOpenSymbol(q.symbol) }
+                        }
+                    }
+                }
             }
             item {
                 Text(
@@ -180,22 +188,17 @@ fun HomeContent(
     }
 }
 
-/** Slowly drifting colour blobs behind the home page. */
+/** A calm, static accent glow behind the top of the home page. */
 @Composable
-private fun AuroraBackground() {
+private fun TopGlow() {
     val mc = CapitolColors.market
     val bg = MaterialTheme.colorScheme.background
-    val t = rememberInfiniteTransition(label = "aurora")
-    val phase by t.animateFloat(0f, (2 * Math.PI).toFloat(), infiniteRepeatable(tween(18_000, easing = LinearEasing)), label = "phase")
-    val a = if (mc.isDark) 0.28f else 0.35f
     Canvas(Modifier.fillMaxSize()) {
         drawRect(bg)
-        val w = size.width; val h = size.height
-        fun blob(cx: Float, cy: Float, r: Float, c: Color) =
-            drawCircle(Brush.radialGradient(listOf(c.copy(alpha = a), Color.Transparent), center = Offset(cx, cy), radius = r), r, Offset(cx, cy))
-        blob(w * (0.2f + 0.15f * cos(phase)), h * (0.12f + 0.05f * sin(phase)), w * 0.8f, mc.chart1)
-        blob(w * (0.85f + 0.1f * sin(phase * 1.3f)), h * (0.25f + 0.06f * cos(phase)), w * 0.7f, mc.bull)
-        blob(w * (0.5f + 0.2f * sin(phase * 0.7f)), h * (0.55f + 0.05f * cos(phase * 1.1f)), w * 0.9f, mc.chart3)
+        val w = size.width
+        val r = w * 1.1f
+        drawCircle(Brush.radialGradient(listOf(mc.glow.copy(alpha = if (mc.isDark) 0.16f else 0.10f), Color.Transparent),
+            center = Offset(w * 0.15f, -w * 0.15f), radius = r), r, Offset(w * 0.15f, -w * 0.15f))
     }
 }
 
@@ -203,25 +206,22 @@ private fun AuroraBackground() {
 private fun Header(isDark: Boolean, loading: Boolean, onToggleTheme: () -> Unit, onRefresh: () -> Unit, onSettings: () -> Unit) {
     val hour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
     val greet = when (hour) { in 5..11 -> "Good morning"; in 12..16 -> "Good afternoon"; else -> "Good evening" }
-    val t = rememberInfiniteTransition(label = "logo")
-    val pulse by t.animateFloat(0.85f, 1.15f, infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
-    Row(Modifier.statusBarsPadding().padding(top = 12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.statusBarsPadding().padding(top = 14.dp, bottom = 2.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(
-            Modifier.size(44.dp).clip(RoundedCornerShape(14.dp))
-                .background(Brush.linearGradient(listOf(CapitolColors.market.chart1, CapitolColors.market.bull))),
+            Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primary),
             contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.AutoMirrored.Filled.ShowChart, null, tint = Color.White, modifier = Modifier.scale(pulse))
-        }
+        ) { Icon(Icons.AutoMirrored.Filled.ShowChart, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(22.dp)) }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(greet, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Capitol", style = MaterialTheme.typography.headlineMedium)
+            Text(greet, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Capitol", style = MaterialTheme.typography.titleLarge)
         }
-        if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-        else IconButton(onRefresh) { Icon(Icons.Default.Refresh, "Refresh") }
-        IconButton(onToggleTheme) { Icon(if (isDark) Icons.Default.LightMode else Icons.Default.DarkMode, "Toggle theme") }
-        IconButton(onSettings) { Icon(Icons.Default.Settings, "Settings") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (loading) Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) }
+            else com.capitol.app.ui.components.HeaderIconButton(Icons.Default.Refresh, "Refresh", onRefresh)
+            com.capitol.app.ui.components.HeaderIconButton(if (isDark) Icons.Default.LightMode else Icons.Default.DarkMode, "Toggle theme", onToggleTheme)
+            com.capitol.app.ui.components.HeaderIconButton(Icons.Default.Settings, "Settings", onSettings)
+        }
     }
 }
 
@@ -230,14 +230,12 @@ private fun Header(isDark: Boolean, loading: Boolean, onToggleTheme: () -> Unit,
 private fun TickerTape(quotes: List<QuoteSnapshot>, onOpen: (String) -> Unit) {
     if (quotes.isEmpty()) return
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.7f))
-            .padding(vertical = 8.dp)
-            .basicMarquee(iterations = Int.MAX_VALUE, velocity = 40.dp),
+        Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            .basicMarquee(iterations = Int.MAX_VALUE, velocity = 36.dp),
     ) {
         quotes.forEach { q ->
             Row(Modifier.padding(horizontal = 14.dp).clickable { onOpen(q.symbol) }, verticalAlignment = Alignment.CenterVertically) {
-                Text(q.name.take(16), style = MaterialTheme.typography.labelMedium)
+                Text(q.name.take(16), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.width(6.dp))
                 Text("%,.2f".format(q.price), style = NumberStyle.copy(fontSize = 12.sp))
                 Spacer(Modifier.width(4.dp))
@@ -251,21 +249,18 @@ private fun TickerTape(quotes: List<QuoteSnapshot>, onOpen: (String) -> Unit) {
 private fun HeroCard(st: HomeState, onSelect: (MarketIndex) -> Unit, onOpen: (String) -> Unit, onRange: (com.capitol.app.data.market.ChartRange) -> Unit) {
     val mc = CapitolColors.market
     val hero = st.hero
-    val t = rememberInfiniteTransition(label = "live")
-    val live by t.animateFloat(0.3f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "liveDot")
     Box(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp))
-            .background(Brush.linearGradient(listOf(mc.heroStart, mc.heroEnd)))
+            .background(Brush.verticalGradient(listOf(mc.heroStart, mc.heroEnd)))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (mc.isDark) 0.55f else 0.9f), RoundedCornerShape(28.dp))
             .clickable { hero?.let { onOpen(it.symbol) } }
-            .padding(18.dp)
+            .padding(20.dp)
     ) {
         Column {
+            com.capitol.app.ui.components.PillTabs(HomeViewModel.INDICES.take(5), st.heroIndex, { it.label }, onSelect)
+            Spacer(Modifier.height(16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).alpha(live).clip(CircleShape).background(mc.bull))
-                Spacer(Modifier.width(6.dp))
-                Text(st.heroIndex.label, style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.width(8.dp))
-                Text(st.heroIndex.region, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                com.capitol.app.ui.components.Overline("${st.heroIndex.label} · ${st.heroIndex.region}")
                 Spacer(Modifier.weight(1f))
                 com.capitol.app.ui.components.LiveBadge(st.streaming, st.lastTick, marketOpen(st.heroIndex))
             }
@@ -273,23 +268,16 @@ private fun HeroCard(st: HomeState, onSelect: (MarketIndex) -> Unit, onOpen: (St
             if (hero != null) {
                 // Live price and day change; the chart below stays as loaded.
                 val q = st.heroQuote
-                com.capitol.app.ui.components.FlashingPrice(q?.price ?: hero.regularMarketPrice, fontSize = 34)
-                if (q != null) ChangeText(q.change, q.changePercent, fontSize = 15) else ChangeText(hero.change, hero.changePercent, fontSize = 15)
+                com.capitol.app.ui.components.FlashingPrice(q?.price ?: hero.regularMarketPrice, fontSize = 38)
+                Spacer(Modifier.height(6.dp))
+                if (q != null) com.capitol.app.ui.components.ChangePill(q.change, q.changePercent, showAbsolute = true)
+                else com.capitol.app.ui.components.ChangePill(hero.change, hero.changePercent, showAbsolute = true)
+                Spacer(Modifier.height(14.dp))
+                PriceChart(hero.candles, mode = PriceChartMode.LINE, height = 180.dp, intraday = st.heroRange.isIntraday)
                 Spacer(Modifier.height(10.dp))
-                PriceChart(hero.candles, mode = PriceChartMode.LINE, height = 190.dp, intraday = st.heroRange.isIntraday)
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(com.capitol.app.data.market.ChartRange.PICKER) { r ->
-                        FilterChip(st.heroRange == r, { onRange(r) }, { Text(r.label) })
-                    }
-                }
+                com.capitol.app.ui.components.PillTabs(com.capitol.app.data.market.ChartRange.PICKER, st.heroRange, { it.label }, onRange)
             } else {
-                ShimmerBox(Modifier.fillMaxWidth().height(240.dp))
-            }
-            Spacer(Modifier.height(8.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(HomeViewModel.INDICES.take(5)) { idx ->
-                    FilterChip(selected = idx == st.heroIndex, onClick = { onSelect(idx) }, label = { Text(idx.label) })
-                }
+                ShimmerBox(Modifier.fillMaxWidth().height(260.dp))
             }
         }
     }
@@ -339,25 +327,30 @@ private fun QuickActions(onOpenSymbol: () -> Unit, onOpenAgent: () -> Unit, onOp
 }
 
 @Composable
-private fun QuickAction(icon: ImageVector, label: String, color: Color, modifier: Modifier, onClick: () -> Unit) {
+private fun QuickAction(icon: ImageVector, label: String, @Suppress("UNUSED_PARAMETER") color: Color, modifier: Modifier, onClick: () -> Unit) {
     Column(
-        modifier.clip(RoundedCornerShape(20.dp)).background(color.copy(alpha = 0.14f)).clickable(onClick = onClick).padding(vertical = 14.dp),
+        modifier.clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainer)
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (CapitolColors.market.isDark) 0.55f else 0.9f), RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick).padding(vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(icon, null, tint = color)
-        Spacer(Modifier.height(4.dp))
-        Text(label, style = MaterialTheme.typography.labelLarge)
+        Box(Modifier.size(36.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium)
     }
 }
 
 @Composable
 private fun IndexCard(idx: MarketIndex, q: QuoteSnapshot, onClick: () -> Unit) {
     CapitolCard(Modifier.width(168.dp).clickable(onClick = onClick), padding = PaddingValues(14.dp)) {
-        Text(idx.label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
-        Text(idx.region, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        com.capitol.app.ui.components.Overline(idx.region)
+        Text(idx.label, style = MaterialTheme.typography.titleSmall, maxLines = 1)
         Spacer(Modifier.height(6.dp))
-        com.capitol.app.ui.components.FlashingPrice(q.price, fontSize = 17)
-        Text("%+.2f%%".format(q.changePercent), color = changeColor(q.change), style = NumberStyle.copy(fontSize = 12.sp))
+        com.capitol.app.ui.components.FlashingPrice(q.price, fontSize = 18)
+        Spacer(Modifier.height(4.dp))
+        com.capitol.app.ui.components.ChangePill(q.change, q.changePercent, fontSize = 11)
         Spacer(Modifier.height(6.dp))
         Sparkline(q.sparkline, Modifier.fillMaxWidth().height(36.dp))
     }
@@ -373,7 +366,7 @@ private fun SignalHeatmap(reports: List<AnalysisReport>, onOpen: (String) -> Uni
                     val c = signalColor(r.verdict)
                     Column(
                         Modifier.weight(1f).clip(RoundedCornerShape(16.dp))
-                            .background(Brush.verticalGradient(listOf(c.copy(alpha = 0.32f), c.copy(alpha = 0.12f))))
+                            .background(c.copy(alpha = 0.12f))
                             .clickable { onOpen(r.symbol) }.padding(12.dp)
                     ) {
                         Text(r.symbol.substringBefore('.'), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -389,18 +382,17 @@ private fun SignalHeatmap(reports: List<AnalysisReport>, onOpen: (String) -> Uni
 
 @Composable
 private fun MoverRow(q: QuoteSnapshot, onClick: () -> Unit) {
-    CapitolCard(Modifier.fillMaxWidth().clickable(onClick = onClick), padding = PaddingValues(12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(q.symbol, style = MaterialTheme.typography.titleSmall)
-                Text(q.name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Sparkline(q.sparkline, Modifier.width(70.dp).height(30.dp))
-            Spacer(Modifier.width(12.dp))
-            Column(horizontalAlignment = Alignment.End) {
-                Text("%,.2f".format(q.price), style = NumberStyle.copy(fontSize = 14.sp))
-                Text("%+.2f%%".format(q.changePercent), color = changeColor(q.change), style = NumberStyle.copy(fontSize = 12.sp))
-            }
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(q.symbol.substringBefore('.'), style = MaterialTheme.typography.titleSmall)
+            Text(q.name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Sparkline(q.sparkline, Modifier.width(64.dp).height(28.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(horizontalAlignment = Alignment.End) {
+            Text("%,.2f".format(q.price), style = NumberStyle.copy(fontSize = 14.sp))
+            Spacer(Modifier.height(2.dp))
+            com.capitol.app.ui.components.ChangePill(q.change, q.changePercent, fontSize = 11)
         }
     }
 }
@@ -445,11 +437,8 @@ private fun MoversSection(st: HomeState, onUniverse: (com.capitol.app.analysis.U
             Text("Today's top movers", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             com.capitol.app.ui.components.LiveBadge(st.streaming, st.lastTick, open)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf(com.capitol.app.analysis.Universe.NIFTY50, com.capitol.app.analysis.Universe.US_LARGE).forEach { u ->
-                FilterChip(st.moversUniverse == u, { onUniverse(u) }, { Text(HomeViewModel.marketFor(u).label) })
-            }
-        }
+        com.capitol.app.ui.components.PillTabs(listOf(com.capitol.app.analysis.Universe.NIFTY50, com.capitol.app.analysis.Universe.US_LARGE),
+            st.moversUniverse, { HomeViewModel.marketFor(it).label }, onUniverse)
         Text(
             if (st.moversWholeMarket) "Whole market · excludes penny & illiquid stocks"
             else "From ${st.moversUniverse.label} (market-wide list unavailable)",

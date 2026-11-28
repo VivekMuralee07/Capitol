@@ -6,6 +6,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -167,18 +168,10 @@ fun AgentScreen(vm: AgentViewModel, initialPrompt: String?, onOpenSettings: () -
 
     if (showHistory) HistorySheet(st.saved, st.chatId, onOpen = { vm.open(it); showHistory = false }, onDelete = { vm.delete(it) }, onDismiss = { showHistory = false })
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp))
-                .background(Brush.linearGradient(listOf(CapitolColors.market.chart3, CapitolColors.market.chart1))),
-                contentAlignment = Alignment.Center) { Icon(Icons.Default.AutoAwesome, null, tint = androidx.compose.ui.graphics.Color.White) }
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Capitol AI Agent", style = MaterialTheme.typography.titleLarge)
-                Text(if (st.usage.costUsd > 0) "This chat ≈ ${usd(st.usage.costUsd)} · powered by Claude" else "Powered by Claude · runs Capitol's tools for you",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            IconButton({ showHistory = true }) { Icon(Icons.Default.History, "Saved chats") }
-            IconButton(vm::newChat) { Icon(Icons.Default.Add, "New chat") }
+        com.capitol.app.ui.components.ScreenHeader("AI Agent", Modifier.padding(horizontal = 16.dp),
+            subtitle = if (st.usage.costUsd > 0) "This chat ≈ ${usd(st.usage.costUsd)} · powered by Claude" else "Powered by Claude · runs Capitol's tools for you") {
+            com.capitol.app.ui.components.HeaderIconButton(Icons.Default.History, "Saved chats", { showHistory = true })
+            com.capitol.app.ui.components.HeaderIconButton(Icons.Default.Add, "New chat", vm::newChat, tint = MaterialTheme.colorScheme.primary)
         }
         LazyColumn(Modifier.weight(1f), state = list, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (!configured) item {
@@ -202,9 +195,12 @@ fun AgentScreen(vm: AgentViewModel, initialPrompt: String?, onOpenSettings: () -
             if (st.streaming.isNotBlank()) item { Bubble(ChatItem.Assistant(st.streaming)) }
             if (st.busy && st.streaming.isBlank()) item { Thinking() }
         }
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(input, { input = it }, Modifier.weight(1f), placeholder = { Text("Ask about any stock…") },
-                shape = RoundedCornerShape(20.dp), maxLines = 4, enabled = configured)
+                shape = RoundedCornerShape(26.dp), maxLines = 4, enabled = configured,
+                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer, focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline, focusedBorderColor = MaterialTheme.colorScheme.primary))
             Spacer(Modifier.width(8.dp))
             FilledIconButton({ vm.send(input); input = "" }, enabled = configured && !st.busy && input.isNotBlank()) {
                 Icon(Icons.AutoMirrored.Filled.Send, "Send")
@@ -243,13 +239,14 @@ private fun HistorySheet(saved: List<SavedChat>, currentId: String, onOpen: (Sav
 private fun Bubble(item: ChatItem) {
     when (item) {
         is ChatItem.User -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Box(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp))
-                .background(MaterialTheme.colorScheme.primary).padding(12.dp)) {
-                Text(item.text, color = MaterialTheme.colorScheme.onPrimary)
+            Box(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(22.dp, 22.dp, 6.dp, 22.dp))
+                .background(MaterialTheme.colorScheme.primary).padding(horizontal = 14.dp, vertical = 10.dp)) {
+                Text(item.text, color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.bodyMedium)
             }
         }
-        is ChatItem.Assistant -> Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(14.dp)) {
+        is ChatItem.Assistant -> Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp, 22.dp, 22.dp, 6.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), RoundedCornerShape(22.dp, 22.dp, 22.dp, 6.dp)).padding(16.dp)) {
             MarkdownText(item.text)
             item.costUsd?.let { cost ->
                 Text("≈ ${usd(cost)}${item.tokens?.let { " · $it" } ?: ""}", style = MaterialTheme.typography.labelSmall,

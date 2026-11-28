@@ -154,15 +154,15 @@ fun WatchlistScreen(vm: WatchlistViewModel, onOpen: (String) -> Unit, onCalendar
     var listMenu by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Watchlist", style = MaterialTheme.typography.headlineMedium)
-                Text("${st.rows.size} symbols · swipe left to remove", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            TextButton(vm::toggleSort) { Text(if (st.sortBySignal) "Sorted: signal" else "Sort by signal") }
-            IconButton(onCalendar) { Icon(Icons.Default.Event, "Earnings & dividends calendar") }
-            IconButton({ vm.refresh() }) { Icon(Icons.Default.Refresh, "Refresh") }
-            IconButton({ adding = true }) { Icon(Icons.Default.Add, "Add") }
+        com.capitol.app.ui.components.ScreenHeader("Watchlist", Modifier.padding(horizontal = 16.dp),
+            subtitle = "${st.rows.size} symbols · swipe left to remove") {
+            com.capitol.app.ui.components.HeaderIconButton(Icons.Default.Event, "Earnings & dividends calendar", onCalendar)
+            com.capitol.app.ui.components.HeaderIconButton(Icons.Default.Refresh, "Refresh", { vm.refresh() })
+            com.capitol.app.ui.components.HeaderIconButton(Icons.Default.Add, "Add", { adding = true }, tint = MaterialTheme.colorScheme.primary)
+        }
+        Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.weight(1f))
+            TextButton(vm::toggleSort) { Text(if (st.sortBySignal) "Sorted by signal" else "Sort by signal") }
         }
         data?.let { d ->
             Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -225,17 +225,17 @@ fun WatchlistScreen(vm: WatchlistViewModel, onOpen: (String) -> Unit, onCalendar
 @Composable
 private fun WatchCard(row: WatchRow, onClick: () -> Unit, onAlert: () -> Unit) {
     val s = row.series
-    CapitolCard(Modifier.fillMaxWidth().clickable(onClick = onClick), padding = PaddingValues(14.dp)) {
+    CapitolCard(Modifier.fillMaxWidth().clickable(onClick = onClick), padding = PaddingValues(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(row.item.symbol, style = MaterialTheme.typography.titleSmall)
+                Text(row.item.symbol.substringBefore('.'), style = MaterialTheme.typography.titleMedium)
                 Text(s?.name ?: row.item.name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (s != null) Sparkline(s.closes.takeLast(60), Modifier.width(80.dp).height(34.dp))
             Spacer(Modifier.width(10.dp))
             Column(horizontalAlignment = Alignment.End) {
-                Text(s?.let { "%,.2f".format(it.regularMarketPrice) } ?: "—", style = NumberStyle.copy(fontSize = 14.sp))
-                s?.let { Text("%+.2f%%".format(it.changePercent), color = changeColor(it.change), style = NumberStyle.copy(fontSize = 12.sp)) }
+                Text(s?.let { "%,.2f".format(it.regularMarketPrice) } ?: "—", style = NumberStyle.copy(fontSize = 15.sp))
+                s?.let { Spacer(Modifier.height(3.dp)); com.capitol.app.ui.components.ChangePill(it.change, it.changePercent, fontSize = 11) }
             }
         }
         Spacer(Modifier.height(8.dp))

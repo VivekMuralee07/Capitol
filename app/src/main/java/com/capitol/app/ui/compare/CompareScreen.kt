@@ -139,10 +139,7 @@ fun CompareScreen(vm: CompareViewModel, initial: List<String>, onBack: () -> Uni
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-                Text("Compare", style = MaterialTheme.typography.headlineMedium)
-            }
+            com.capitol.app.ui.components.ScreenHeader("Compare", subtitle = "Up to 4 stocks side by side", onBack = onBack)
             if (st.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         }
         item {
