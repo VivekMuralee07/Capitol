@@ -34,6 +34,16 @@ data class MarketColors(
     val heroEnd: Color,
     val glow: Color,
     val isDark: Boolean,
+    /** Vibrant style: gradient hero/summary cards and multi-colour accents. */
+    val vibrant: Boolean = false,
+    /** Hero (home index / analysis) gradient; on vibrant it is saturated and content sits on it in white. */
+    val heroGradient: List<Color> = listOf(heroStart, heroEnd),
+    /** Portfolio summary gradient. */
+    val summaryGradient: List<Color> = listOf(heroStart, heroEnd),
+    /** Credit-card style gradient for the bills card. */
+    val cardGradient: List<Color> = listOf(heroStart, heroEnd),
+    /** Palette for quick actions, index cards, avatars. */
+    val accents: List<Color> = listOf(chart1, chart4, chart3, neutral, bull, chart2),
 )
 
 // Premium fintech palette: near-black / soft-white canvas, quiet surfaces, one indigo accent,
@@ -52,6 +62,29 @@ private val LightMarket = MarketColors(
     chart1 = AccentLight, chart2 = Color(0xFFE07A1F), chart3 = Color(0xFF7C3AED), chart4 = Color(0xFF0284C7),
     grid = Color(0x12000000), heroStart = Color(0xFFEEF0FF), heroEnd = Color(0xFFFFFFFF), glow = AccentLight,
     isDark = false,
+)
+
+// Vibrant style: saturated gradients and a six-hue accent palette.
+private val VibrantAccents = listOf(Color(0xFF8B5CF6), Color(0xFF0EA5E9), Color(0xFFEC4899), Color(0xFFF59E0B), Color(0xFF10B981), Color(0xFFF97316))
+private val VibrantDarkMarket = DarkMarket.copy(
+    bull = Color(0xFF2EE6A6), bear = Color(0xFFFF5C8A), neutral = Color(0xFFFFC53D),
+    chart1 = Color(0xFFA78BFA), chart2 = Color(0xFFFB923C), chart3 = Color(0xFFF472B6), chart4 = Color(0xFF38BDF8),
+    heroStart = Color(0xFF3730A3), heroEnd = Color(0xFFBE185D), glow = Color(0xFF8B5CF6),
+    vibrant = true,
+    heroGradient = listOf(Color(0xFF3730A3), Color(0xFF6D28D9), Color(0xFFBE185D)),
+    summaryGradient = listOf(Color(0xFF0F766E), Color(0xFF1D4ED8), Color(0xFF6D28D9)),
+    cardGradient = listOf(Color(0xFFEA580C), Color(0xFFDB2777), Color(0xFF7C3AED)),
+    accents = VibrantAccents,
+)
+private val VibrantLightMarket = LightMarket.copy(
+    bull = Color(0xFF00A870), bear = Color(0xFFE11D48), neutral = Color(0xFFD97706),
+    chart1 = Color(0xFF7C3AED), chart2 = Color(0xFFEA580C), chart3 = Color(0xFFDB2777), chart4 = Color(0xFF0284C7),
+    heroStart = Color(0xFF4F46E5), heroEnd = Color(0xFFDB2777), glow = Color(0xFF8B5CF6),
+    vibrant = true,
+    heroGradient = listOf(Color(0xFF4F46E5), Color(0xFF7C3AED), Color(0xFFDB2777)),
+    summaryGradient = listOf(Color(0xFF0D9488), Color(0xFF2563EB), Color(0xFF7C3AED)),
+    cardGradient = listOf(Color(0xFFF97316), Color(0xFFDB2777), Color(0xFF7C3AED)),
+    accents = VibrantAccents,
 )
 
 val LocalMarketColors = staticCompositionLocalOf { DarkMarket }
@@ -84,6 +117,26 @@ private val LightScheme = lightColorScheme(
     outline = Color(0xFFE3E6EC), outlineVariant = Color(0xFFEDEFF3), error = Color(0xFFDC2626),
 )
 
+private val VibrantDarkScheme = DarkScheme.copy(
+    primary = Color(0xFFA78BFA), onPrimary = Color(0xFF1A0B3D),
+    primaryContainer = Color(0xFF3B2A6B), onPrimaryContainer = Color(0xFFEDE7FF),
+    secondary = Color(0xFFA78BFA), secondaryContainer = Color(0xFF2E2350), onSecondaryContainer = Color(0xFFEDE7FF),
+    tertiary = Color(0xFFF472B6),
+    background = Color(0xFF0B0A14), surface = Color(0xFF0B0A14),
+    surfaceContainerLow = Color(0xFF110F1C), surfaceContainer = Color(0xFF16131F), surfaceContainerHigh = Color(0xFF1E1A2B),
+    surfaceContainerHighest = Color(0xFF262136), outline = Color(0xFF2E2840), outlineVariant = Color(0xFF221E30),
+    error = Color(0xFFFF5C8A),
+)
+private val VibrantLightScheme = LightScheme.copy(
+    primary = Color(0xFF7C3AED), onPrimary = Color.White,
+    primaryContainer = Color(0xFFEDE5FF), onPrimaryContainer = Color(0xFF3B0F8C),
+    secondary = Color(0xFF7C3AED), secondaryContainer = Color(0xFFEFE7FF), onSecondaryContainer = Color(0xFF4C1D95),
+    tertiary = Color(0xFFDB2777),
+    background = Color(0xFFF8F6FF), surface = Color(0xFFF8F6FF),
+    surfaceContainerHigh = Color(0xFFF2EEFB), surfaceContainerHighest = Color(0xFFEAE4F7),
+    outline = Color(0xFFE6E0F2), outlineVariant = Color(0xFFEFEAF8), error = Color(0xFFE11D48),
+)
+
 private val CapitolType = Typography().run {
     copy(
         displayMedium = displayMedium.copy(fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp),
@@ -112,14 +165,18 @@ private val CapitolShapes = androidx.compose.material3.Shapes(
 val NumberStyle = TextStyle(fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum", letterSpacing = (-0.2).sp)
 
 @Composable
-fun CapitolTheme(darkTheme: Boolean, dynamicColor: Boolean = false, content: @Composable () -> Unit) {
+fun CapitolTheme(darkTheme: Boolean, dynamicColor: Boolean = false, vibrant: Boolean = true, content: @Composable () -> Unit) {
     val ctx = LocalContext.current
     val scheme: ColorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= 31 -> if (darkTheme) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
-        darkTheme -> DarkScheme
-        else -> LightScheme
+        darkTheme -> if (vibrant) VibrantDarkScheme else DarkScheme
+        else -> if (vibrant) VibrantLightScheme else LightScheme
     }
-    CompositionLocalProvider(LocalMarketColors provides if (darkTheme) DarkMarket else LightMarket) {
+    val market = when {
+        vibrant -> if (darkTheme) VibrantDarkMarket else VibrantLightMarket
+        else -> if (darkTheme) DarkMarket else LightMarket
+    }
+    CompositionLocalProvider(LocalMarketColors provides market) {
         MaterialTheme(colorScheme = scheme, typography = CapitolType, shapes = CapitolShapes) {
             // Root surface so all text defaults to the correct on-background colour in both themes.
             androidx.compose.material3.Surface(color = scheme.background, contentColor = scheme.onBackground, content = content)
@@ -129,4 +186,30 @@ fun CapitolTheme(darkTheme: Boolean, dynamicColor: Boolean = false, content: @Co
 
 object CapitolColors {
     val market: MarketColors @Composable get() = LocalMarketColors.current
+}
+
+/**
+ * Content placed on a saturated gradient (vibrant hero, summary and card tiles): text, labels, pills and
+ * chart axes switch to white so they stay readable. On the premium style it changes nothing.
+ */
+@Composable
+fun OnGradient(enabled: Boolean = LocalMarketColors.current.vibrant, content: @Composable () -> Unit) {
+    if (!enabled) { content(); return }
+    val s = MaterialTheme.colorScheme
+    MaterialTheme(
+        colorScheme = s.copy(
+            onSurface = Color.White, onSurfaceVariant = Color.White.copy(alpha = 0.78f), onBackground = Color.White,
+            surface = Color(0xFF1B1238), outline = Color.White.copy(alpha = 0.28f), outlineVariant = Color.White.copy(alpha = 0.18f),
+            surfaceContainerHigh = Color.White.copy(alpha = 0.18f), surfaceVariant = Color.White.copy(alpha = 0.22f),
+            primary = Color.White, onPrimary = Color(0xFF2A1260),
+        ),
+        typography = MaterialTheme.typography, shapes = MaterialTheme.shapes,
+    ) {
+        CompositionLocalProvider(
+            androidx.compose.material3.LocalContentColor provides Color.White,
+            LocalMarketColors provides LocalMarketColors.current.copy(
+                bull = Color(0xFF6EFFC4), bear = Color(0xFFFFB3C7), grid = Color(0x33FFFFFF),
+            ),
+        ) { content() }
+    }
 }

@@ -240,8 +240,10 @@ private fun Bubble(item: ChatItem) {
     when (item) {
         is ChatItem.User -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             Box(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(22.dp, 22.dp, 6.dp, 22.dp))
-                .background(MaterialTheme.colorScheme.primary).padding(horizontal = 14.dp, vertical = 10.dp)) {
-                Text(item.text, color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.bodyMedium)
+                .background(if (CapitolColors.market.vibrant) Brush.linearGradient(CapitolColors.market.heroGradient)
+                    else androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary)).padding(horizontal = 14.dp, vertical = 10.dp)) {
+                Text(item.text, color = if (CapitolColors.market.vibrant) androidx.compose.ui.graphics.Color.White else MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.bodyMedium)
             }
         }
         is ChatItem.Assistant -> Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp, 22.dp, 22.dp, 6.dp))

@@ -250,10 +250,11 @@ private fun SummaryCard(totals: List<CurrencyTotal>, onAskAi: () -> Unit) {
     val mc = CapitolColors.market
     Box(
         Modifier.fillMaxWidth().clip(androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
-            .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(mc.heroStart, mc.heroEnd)))
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (mc.isDark) 0.55f else 0.9f), androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
+            .background(if (mc.vibrant) androidx.compose.ui.graphics.Brush.linearGradient(mc.summaryGradient) else androidx.compose.ui.graphics.Brush.verticalGradient(mc.summaryGradient))
+            .then(if (mc.vibrant) Modifier else Modifier.border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (mc.isDark) 0.55f else 0.9f), androidx.compose.foundation.shape.RoundedCornerShape(28.dp)))
             .padding(20.dp)
     ) {
+        com.capitol.app.ui.theme.OnGradient {
         Column {
             totals.forEachIndexed { i, t ->
                 if (i > 0) { Spacer(Modifier.height(16.dp)); com.capitol.app.ui.components.RowDivider(); Spacer(Modifier.height(16.dp)) }
@@ -275,9 +276,12 @@ private fun SummaryCard(totals: List<CurrencyTotal>, onAskAi: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(16.dp))
-            OutlinedButton(onAskAi, shape = androidx.compose.foundation.shape.RoundedCornerShape(50)) {
+            OutlinedButton(onAskAi, shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) {
                 Icon(Icons.Default.AutoAwesome, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("AI portfolio review")
             }
+        }
         }
     }
 }
@@ -285,7 +289,17 @@ private fun SummaryCard(totals: List<CurrencyTotal>, onAskAi: () -> Unit) {
 /** Credit card bills from INDmoney — read-only; pay in your bank or INDmoney app. */
 @Composable
 private fun CreditCardsCard(cards: List<com.capitol.app.data.broker.CreditCardBill>, onAskAi: () -> Unit) {
-    CapitolCard {
+    val mc = CapitolColors.market
+    if (mc.vibrant) Box(
+        Modifier.fillMaxWidth().clip(androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
+            .background(androidx.compose.ui.graphics.Brush.linearGradient(mc.cardGradient)).padding(20.dp)
+    ) { com.capitol.app.ui.theme.OnGradient { Column { CreditCardsContent(cards, onAskAi) } } }
+    else CapitolCard { CreditCardsContent(cards, onAskAi) }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.ColumnScope.CreditCardsContent(cards: List<com.capitol.app.data.broker.CreditCardBill>, onAskAi: () -> Unit) {
+    run {
         Text("Credit card bills · INDmoney", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         AnimatedNumber(cards.sumOf { it.totalDue }, fontSize = 28, format = { "₹%,.2f".format(it) })
         Text("Total due across ${cards.size} card${if (cards.size > 1) "s" else ""}", style = MaterialTheme.typography.bodySmall)
@@ -319,6 +333,17 @@ private fun CreditCardsCard(cards: List<com.capitol.app.data.broker.CreditCardBi
     }
 }
 
+/** Vibrant: a stable accent per symbol; premium: the single accent (MF in purple). */
+@Composable
+private fun avatarColor(h: Holding): androidx.compose.ui.graphics.Color {
+    val mc = CapitolColors.market
+    return when {
+        h.isMutualFund -> mc.chart3
+        mc.vibrant -> mc.accents[Math.floorMod(h.tradingSymbol.hashCode(), mc.accents.size)]
+        else -> MaterialTheme.colorScheme.primary
+    }
+}
+
 @Composable
 private fun HoldingRow(h: Holding, onClick: () -> Unit) {
     // Mutual funds have no chart to open.
@@ -326,10 +351,9 @@ private fun HoldingRow(h: Holding, onClick: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             // Monogram avatar: the symbol's first letter on a quiet accent tint.
             Box(Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape)
-                .background(if (h.isMutualFund) CapitolColors.market.chart3.copy(alpha = 0.15f) else MaterialTheme.colorScheme.secondaryContainer),
+                .background(avatarColor(h).copy(alpha = if (CapitolColors.market.vibrant) 0.22f else 0.15f)),
                 contentAlignment = Alignment.Center) {
-                Text(if (h.isMutualFund) "MF" else h.tradingSymbol.take(1), style = MaterialTheme.typography.labelLarge,
-                    color = if (h.isMutualFund) CapitolColors.market.chart3 else MaterialTheme.colorScheme.primary)
+                Text(if (h.isMutualFund) "MF" else h.tradingSymbol.take(1), style = MaterialTheme.typography.labelLarge, color = avatarColor(h))
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {

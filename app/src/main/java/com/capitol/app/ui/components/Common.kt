@@ -92,7 +92,8 @@ fun ChangeText(change: Double, pct: Double, modifier: Modifier = Modifier, fontS
 }
 
 @Composable
-fun CapitolCard(modifier: Modifier = Modifier, padding: PaddingValues = PaddingValues(18.dp), content: @Composable ColumnScope.() -> Unit) {
+fun CapitolCard(modifier: Modifier = Modifier, padding: PaddingValues = PaddingValues(18.dp), tint: androidx.compose.ui.graphics.Brush? = null,
+                content: @Composable ColumnScope.() -> Unit) {
     val dark = CapitolColors.market.isDark
     Card(
         modifier,
@@ -101,13 +102,19 @@ fun CapitolCard(modifier: Modifier = Modifier, padding: PaddingValues = PaddingV
         // Hairline edge: barely there in dark mode, a soft rule on light backgrounds.
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (dark) 0.55f else 0.9f)),
         elevation = CardDefaults.cardElevation(0.dp),
-    ) { Column(Modifier.padding(padding), content = content) }
+    ) { Column((if (tint != null) Modifier.background(tint) else Modifier).padding(padding), content = content) }
 }
 
 /** Section heading: quiet title with an optional trailing action ("See all", chips…). */
 @Composable
 fun SectionTitle(text: String, modifier: Modifier = Modifier, trailing: @Composable (() -> Unit)? = null) {
+    val mc = CapitolColors.market
     Row(modifier.fillMaxWidth().padding(top = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (mc.vibrant) {
+            Box(Modifier.size(width = 4.dp, height = 18.dp).clip(RoundedCornerShape(2.dp))
+                .background(androidx.compose.ui.graphics.Brush.verticalGradient(mc.heroGradient)))
+            Spacer(Modifier.width(10.dp))
+        }
         Text(text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
         trailing?.invoke()
     }

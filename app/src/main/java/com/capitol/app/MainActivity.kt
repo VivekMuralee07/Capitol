@@ -40,7 +40,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
                 )
             }
-            CapitolTheme(darkTheme = dark, dynamicColor = settings.dynamicColor) {
+            CapitolTheme(darkTheme = dark, dynamicColor = settings.dynamicColor, vibrant = settings.designStyle == com.capitol.app.data.prefs.DesignStyle.VIBRANT) {
                 CapitolNavHost(container, dark)
                 if (com.capitol.app.ui.lock.AppLock.locked) com.capitol.app.ui.lock.LockScreen(this@MainActivity)
             }

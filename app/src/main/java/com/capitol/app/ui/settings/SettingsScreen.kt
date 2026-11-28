@@ -75,6 +75,19 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit, onStartUpdate: () -> Uni
             CapitolCard {
                 Text("Appearance", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
+                Text("Style", style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.height(6.dp))
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    com.capitol.app.data.prefs.DesignStyle.entries.forEachIndexed { i, d ->
+                        SegmentedButton(s.designStyle == d, { scope.launch { c.settings.setDesignStyle(d) } },
+                            SegmentedButtonDefaults.itemShape(i, com.capitol.app.data.prefs.DesignStyle.entries.size)) {
+                            Text(when (d) { com.capitol.app.data.prefs.DesignStyle.VIBRANT -> "Vibrant"; com.capitol.app.data.prefs.DesignStyle.PREMIUM -> "Premium" })
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text("Theme", style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.height(6.dp))
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     ThemeMode.entries.forEachIndexed { i, m ->
                         SegmentedButton(s.themeMode == m, { scope.launch { c.settings.setTheme(m) } }, SegmentedButtonDefaults.itemShape(i, ThemeMode.entries.size)) {
