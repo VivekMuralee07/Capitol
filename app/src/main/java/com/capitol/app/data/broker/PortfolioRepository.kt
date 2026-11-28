@@ -40,29 +40,13 @@ class PortfolioRepository(
 
     suspend fun refresh() = coroutineScope {
         _state.value = _state.value.copy(loading = true, errors = emptyList())
-        val k = async {
-            when {
-                kite.isConnected -> runCatching { kite.holdings() }
-                kiteMcp?.isConnected == true -> runCatching { kiteMcp.holdings() } // no API key needed
-                else -> Result.success(emptyList())
-            }
-        }
-        // INDmoney: the MCP sign-in (Indian + US stocks) when connected, otherwise the INDstocks API token.
-        val i = async {
-            when {
-                indmoneyMcp?.isConnected == true -> runCatching { indmoneyMcp.holdings() }
-                indmoney.isConnected -> runCatching { indmoney.holdings() }
-                else -> Result.success(emptyList())
-            }
-        }
-        // Coin mutual funds: from the Kite Connect API when connected, otherwise via Kite MCP.
-        val mf = async {
-            when {
-                kite.isConnected -> runCatching { kite.mfHoldings() }
-                kiteMcp?.isConnected == true -> runCatching { kiteMcp.mfHoldings() }
-                else -> Result.success(emptyList())
-            }
-        }
+        // Brokers connect only through their official MCP servers (Zerodha Kite MCP, INDmoney MCP).
+        // The older API-key clients (Kite Connect, INDstocks) are no longer offered in the app, so
+        // any token left over from them is ignored rather than overriding the MCP connections.
+        val k = async { if (kiteMcp?.isConnected == true) runCatching { kiteMcp.holdings() } else Result.success(emptyList()) }
+        val i = async { if (indmoneyMcp?.isConnected == true) runCatching { indmoneyMcp.holdings() } else Result.success(emptyList()) }
+        // Coin mutual funds via Kite MCP.
+        val mf = async { if (kiteMcp?.isConnected == true) runCatching { kiteMcp.mfHoldings() } else Result.success(emptyList()) }
         val cc = async { if (indmoneyMcp?.isConnected == true) runCatching { indmoneyMcp.creditCards() } else Result.success(emptyList()) }
         val kr = k.await(); val ir = i.await(); val mr = mf.await()
         val cr = cc.await().onFailure { com.capitol.app.diagnostics.Diagnostics.error("Broker", "credit cards: ${it.message}", it) }
@@ -89,6 +73,5 @@ class PortfolioRepository(
         return parsed.size
     }
 
-    val anyConnected get() = kite.isConnected || indmoney.isConnected || kiteMcp?.isConnected == true ||
-        indmoneyMcp?.isConnected == true || imported.isNotEmpty()
+    val anyConnected get() = kiteMcp?.isConnected == true || indmoneyMcp?.isConnected == true || imported.isNotEmpty()
 }

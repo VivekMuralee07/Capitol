@@ -33,6 +33,9 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -117,6 +120,8 @@ fun PriceChart(
     mode: PriceChartMode = PriceChartMode.CANDLES,
     intraday: Boolean = false,
     height: Dp = 280.dp,
+    /** Called with the candle under the finger while scrubbing, and null when the finger lifts. */
+    onScrub: ((Candle?) -> Unit)? = null,
 ) {
     val mc = CapitolColors.market
     val primary = MaterialTheme.colorScheme.primary
@@ -124,6 +129,9 @@ fun PriceChart(
     val surface = MaterialTheme.colorScheme.surfaceContainerHigh
     val measurer = rememberTextMeasurer()
     var touchX by remember { mutableStateOf<Float?>(null) }
+    var scrubIndex by remember { mutableStateOf<Int?>(null) }
+    val scrubCb = androidx.compose.runtime.rememberUpdatedState(onScrub)
+    LaunchedEffect(scrubIndex, candles) { scrubCb.value?.invoke(scrubIndex?.let { candles.getOrNull(it) }) }
     val reveal = remember(candles) { Animatable(0f) }
     LaunchedEffect(candles) { reveal.animateTo(1f, tween(1100, easing = FastOutSlowInEasing)) }
     val fmt = remember(intraday) { SimpleDateFormat(if (intraday) "dd MMM HH:mm" else "dd MMM yyyy", Locale.getDefault()) }
@@ -131,9 +139,37 @@ fun PriceChart(
     Canvas(
         modifier.fillMaxWidth().height(height)
             .pointerInput(candles) {
-                detectDragGestures(onDragEnd = { touchX = null }, onDragCancel = { touchX = null }) { change, _ -> touchX = change.position.x }
+                // One gesture for scrubbing inside scrolling pages: the readout shows on press; a mostly
+                // horizontal drag is kept by the chart (consumed, so the page doesn't scroll); a vertical
+                // drag is handed to the page and the readout hides.
+                fun indexAt(px: Float): Int {
+                    val n = candles.size.coerceAtLeast(1)
+                    val step = (size.width - 56.dp.toPx()) / n
+                    return (px / step).toInt().coerceIn(0, n - 1)
+                }
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    touchX = down.position.x; scrubIndex = indexAt(down.position.x)
+                    var total = Offset.Zero
+                    var horizontal: Boolean? = null
+                    while (true) {
+                        val ev = awaitPointerEvent()
+                        val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!ch.pressed) break
+                        if (horizontal == null) {
+                            if (ch.isConsumed) break // something else (the page) took the gesture
+                            total += ch.positionChange()
+                            if (total.getDistance() > viewConfiguration.touchSlop) {
+                                horizontal = kotlin.math.abs(total.x) >= kotlin.math.abs(total.y)
+                                if (horizontal == false) break
+                            }
+                        }
+                        if (horizontal == true) ch.consume()
+                        touchX = ch.position.x; scrubIndex = indexAt(ch.position.x)
+                    }
+                    touchX = null; scrubIndex = null
+                }
             }
-            .pointerInput(candles) { detectTapGestures(onPress = { touchX = it.x; tryAwaitRelease(); touchX = null }) }
     ) {
         if (candles.size < 2) return@Canvas
         val axisW = 56.dp.toPx()
@@ -216,10 +252,14 @@ fun PriceChart(
                 append("L ${"%.2f".format(c.low)}  C ${"%.2f".format(c.close)}")
                 overlays.forEach { o -> o.values.getOrNull(i)?.let { append("\n${o.name} ${"%.2f".format(it)}") } }
             }
-            val t = measurer.measure(label, TextStyle(color = MaterialThemeOnSurface(onSurface), fontSize = 11.sp))
-            val bx = if (x(i) > chartW / 2) x(i) - t.size.width - 16.dp.toPx() else x(i) + 10.dp.toPx()
-            drawRoundRect(surface.copy(alpha = 0.95f), Offset(bx - 6, top), Size(t.size.width + 12f, t.size.height + 12f), CornerRadius(12f))
-            drawText(t, topLeft = Offset(bx, top + 6))
+            // Opaque dark readout with white text: readable on any background, including gradient cards.
+            val t = measurer.measure(label, TextStyle(color = Color.White, fontSize = 11.sp, fontFeatureSettings = "tnum"))
+            val padX = 10.dp.toPx(); val padY = 8.dp.toPx()
+            val boxW = t.size.width + padX * 2; val boxH = t.size.height + padY * 2
+            val bx = (if (x(i) > chartW / 2) x(i) - boxW - 12.dp.toPx() else x(i) + 12.dp.toPx()).coerceIn(0f, (chartW - boxW).coerceAtLeast(0f))
+            drawRoundRect(Color(0xF0121420), Offset(bx, top), Size(boxW, boxH), CornerRadius(10.dp.toPx()))
+            drawRoundRect(Color.White.copy(alpha = 0.12f), Offset(bx, top), Size(boxW, boxH), CornerRadius(10.dp.toPx()), style = Stroke(1f))
+            drawText(t, topLeft = Offset(bx + padX, top + padY))
         }
     }
 }

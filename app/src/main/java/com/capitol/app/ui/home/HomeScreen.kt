@@ -257,6 +257,11 @@ private fun TickerTape(quotes: List<QuoteSnapshot>, onOpen: (String) -> Unit) {
 private fun HeroCard(st: HomeState, onSelect: (MarketIndex) -> Unit, onOpen: (String) -> Unit, onRange: (com.capitol.app.data.market.ChartRange) -> Unit) {
     val mc = CapitolColors.market
     val hero = st.hero
+    // While scrubbing the chart, the header shows the candle under the finger instead of the live price.
+    var scrub by remember(hero) { mutableStateOf<com.capitol.app.data.market.Candle?>(null) }
+    val scrubFmt = remember(st.heroRange) {
+        java.text.SimpleDateFormat(if (st.heroRange.isIntraday) "dd MMM, HH:mm" else "dd MMM yyyy", java.util.Locale.getDefault())
+    }
     Box(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp))
             .background(if (mc.vibrant) Brush.linearGradient(mc.heroGradient) else Brush.verticalGradient(mc.heroGradient))
@@ -271,18 +276,30 @@ private fun HeroCard(st: HomeState, onSelect: (MarketIndex) -> Unit, onOpen: (St
             Row(verticalAlignment = Alignment.CenterVertically) {
                 com.capitol.app.ui.components.Overline("${st.heroIndex.label} · ${st.heroIndex.region}")
                 Spacer(Modifier.weight(1f))
-                com.capitol.app.ui.components.LiveBadge(st.streaming, st.lastTick, marketOpen(st.heroIndex))
+                val sc = scrub
+                if (sc != null) Text(scrubFmt.format(java.util.Date(sc.time * 1000)), style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface)
+                else com.capitol.app.ui.components.LiveBadge(st.streaming, st.lastTick, marketOpen(st.heroIndex))
             }
             Spacer(Modifier.height(6.dp))
             if (hero != null) {
                 // Live price and day change; the chart below stays as loaded.
                 val q = st.heroQuote
-                com.capitol.app.ui.components.FlashingPrice(q?.price ?: hero.regularMarketPrice, fontSize = 38)
-                Spacer(Modifier.height(6.dp))
-                if (q != null) com.capitol.app.ui.components.ChangePill(q.change, q.changePercent, showAbsolute = true)
-                else com.capitol.app.ui.components.ChangePill(hero.change, hero.changePercent, showAbsolute = true)
+                val sc = scrub
+                if (sc != null) {
+                    // Change from the start of the visible range to the scrubbed point.
+                    val base = hero.candles.firstOrNull()?.close ?: sc.close
+                    Text("%,.2f".format(sc.close), style = NumberStyle.copy(fontSize = 38.sp), modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
+                    Spacer(Modifier.height(6.dp))
+                    com.capitol.app.ui.components.ChangePill(sc.close - base, if (base != 0.0) (sc.close - base) / base * 100 else 0.0, showAbsolute = true)
+                } else {
+                    com.capitol.app.ui.components.FlashingPrice(q?.price ?: hero.regularMarketPrice, fontSize = 38)
+                    Spacer(Modifier.height(6.dp))
+                    if (q != null) com.capitol.app.ui.components.ChangePill(q.change, q.changePercent, showAbsolute = true)
+                    else com.capitol.app.ui.components.ChangePill(hero.change, hero.changePercent, showAbsolute = true)
+                }
                 Spacer(Modifier.height(14.dp))
-                PriceChart(hero.candles, mode = PriceChartMode.LINE, height = 180.dp, intraday = st.heroRange.isIntraday)
+                PriceChart(hero.candles, mode = PriceChartMode.LINE, height = 180.dp, intraday = st.heroRange.isIntraday, onScrub = { scrub = it })
                 Spacer(Modifier.height(10.dp))
                 com.capitol.app.ui.components.PillTabs(com.capitol.app.data.market.ChartRange.PICKER, st.heroRange, { it.label }, onRange)
             } else {

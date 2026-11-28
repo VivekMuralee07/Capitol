@@ -108,14 +108,6 @@ class PortfolioViewModel(val c: AppContainer) : ViewModel() {
         }
     }
     fun saveKiteKeys(key: String, secret: String) { c.secrets.put(Key.KITE_API_KEY, key); c.secrets.put(Key.KITE_API_SECRET, secret) }
-    fun completeKiteLogin(requestToken: String) = viewModelScope.launch {
-        runCatching { kite.createSession(requestToken) }
-            .onSuccess { message.value = "Connected to Zerodha Kite"; refresh() }
-            .onFailure { com.capitol.app.diagnostics.Diagnostics.error("Portfolio", it.message ?: "error", it); message.value = it.message }
-    }
-    fun kiteLogout() { kite.logout(); refresh() }
-    fun saveIndToken(token: String) { c.secrets.put(Key.INDMONEY_ACCESS_TOKEN, token); refresh() }
-    fun indDisconnect() { ind.disconnect(); refresh() }
 
     // INDmoney via its official MCP server (OAuth sign-in): holdings in the Portfolio tab + AI agent tools.
     val mcp get() = c.indmoneyMcp
@@ -165,7 +157,6 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
     val st by vm.state.collectAsStateWithLifecycle()
     val msg by vm.message.collectAsStateWithLifecycle()
     val secretsV by vm.secretsVersion.collectAsStateWithLifecycle()
-    var kiteLoginUrl by remember { mutableStateOf<String?>(null) }
     var mcpLoginUrl by remember { mutableStateOf<String?>(null) }
     var kiteMcpUrl by remember { mutableStateOf<String?>(null) }
     val ctx = LocalContext.current
@@ -201,9 +192,7 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
         }
         item { SectionTitle("Connections") }
         item { secretsV.let { KiteMcpCard(vm, onLogin = { kiteMcpUrl = it }, onAskAi = onAskAi) } }
-        item { secretsV.let { KiteCard(vm) { kiteLoginUrl = it } } }
         item { secretsV.let { IndMoneyMcpCard(vm, onLogin = { mcpLoginUrl = it }, onAskAi = onAskAi) } }
-        item { secretsV.let { IndMoneyCard(vm) } }
         item {
             CapitolCard {
                 Text("Import holdings CSV", style = MaterialTheme.typography.titleMedium)
@@ -239,9 +228,6 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
     mcpLoginUrl?.let { url ->
         OAuthWebDialog("Sign in to INDmoney", url, isRedirect = IndMoneyMcp::isRedirect,
             onRedirect = { r -> mcpLoginUrl = null; vm.completeMcpLogin(r) }, onDismiss = { mcpLoginUrl = null })
-    }
-    kiteLoginUrl?.let { url ->
-        KiteLoginDialog(url, onToken = { token -> kiteLoginUrl = null; vm.completeKiteLogin(token) }, onDismiss = { kiteLoginUrl = null })
     }
 }
 
@@ -374,36 +360,6 @@ private fun HoldingRow(h: Holding, onClick: () -> Unit) {
     }
 }
 
-@Composable
-private fun KiteCard(vm: PortfolioViewModel, onLogin: (String) -> Unit) {
-    var key by remember { mutableStateOf(vm.c.secrets.get(Key.KITE_API_KEY) ?: "") }
-    var secret by remember { mutableStateOf(vm.c.secrets.get(Key.KITE_API_SECRET) ?: "") }
-    CapitolCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Zerodha Kite", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            if (vm.kite.isConnected) Icon(Icons.Default.CheckCircle, "Connected", tint = CapitolColors.market.bull)
-        }
-        if (vm.kite.isConnected) {
-            Text("Connected as ${vm.kite.userName ?: "Kite user"}. Kite sessions expire daily around 6 AM — log in again when prompted.",
-                style = MaterialTheme.typography.bodySmall)
-            Row {
-                Button({ runCatching { vm.kite.loginUrl() }.onSuccess(onLogin) }) { Text("Re-login") }
-                TextButton(vm::kiteLogout) { Text("Disconnect") }
-            }
-        } else {
-            Text("Create a Kite Connect app at developers.kite.trade, then paste its API key and secret. Set the app's redirect URL to capitol://kite-callback (any URL works — Capitol reads the request token from the login page).",
-                style = MaterialTheme.typography.bodySmall)
-            OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), label = { Text("API key") }, singleLine = true)
-            OutlinedTextField(secret, { secret = it }, Modifier.fillMaxWidth(), label = { Text("API secret") }, singleLine = true,
-                visualTransformation = PasswordVisualTransformation())
-            Spacer(Modifier.height(8.dp))
-            Button({
-                vm.saveKiteKeys(key, secret)
-                runCatching { vm.kite.loginUrl() }.onSuccess(onLogin)
-            }, enabled = key.isNotBlank() && secret.isNotBlank()) { Text("Log in with Kite") }
-        }
-    }
-}
 
 @Composable
 private fun KiteMcpCard(vm: PortfolioViewModel, onLogin: (String) -> Unit, onAskAi: (String) -> Unit) {
@@ -412,7 +368,7 @@ private fun KiteMcpCard(vm: PortfolioViewModel, onLogin: (String) -> Unit, onAsk
     CapitolCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Zerodha via Kite MCP · recommended", style = MaterialTheme.typography.titleMedium)
+                Text("Zerodha (Kite MCP)", style = MaterialTheme.typography.titleMedium)
                 Text("Stocks + Coin mutual funds · no API key needed", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -445,7 +401,7 @@ private fun IndMoneyMcpCard(vm: PortfolioViewModel, onLogin: (String) -> Unit, o
     CapitolCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("INDmoney (MCP) · recommended", style = MaterialTheme.typography.titleMedium)
+                Text("INDmoney (MCP)", style = MaterialTheme.typography.titleMedium)
                 Text("Includes US stocks · official INDmoney server", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -470,26 +426,6 @@ private fun IndMoneyMcpCard(vm: PortfolioViewModel, onLogin: (String) -> Unit, o
     }
 }
 
-@Composable
-private fun IndMoneyCard(vm: PortfolioViewModel) {
-    var token by remember { mutableStateOf("") }
-    CapitolCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("INDmoney (INDstocks API)", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            if (vm.ind.isConnected) Icon(Icons.Default.CheckCircle, "Connected", tint = CapitolColors.market.bull)
-        }
-        if (vm.ind.isConnected) {
-            Text("Access token saved. INDstocks tokens are short-lived; paste a fresh one if sync fails.", style = MaterialTheme.typography.bodySmall)
-            TextButton(vm::indDisconnect) { Text("Disconnect") }
-        } else {
-            Text("Generate an access token at indstocks.com → API → Generate Token, then paste it here.", style = MaterialTheme.typography.bodySmall)
-            OutlinedTextField(token, { token = it }, Modifier.fillMaxWidth(), label = { Text("Access token") }, singleLine = true,
-                visualTransformation = PasswordVisualTransformation())
-            Spacer(Modifier.height(8.dp))
-            Button({ vm.saveIndToken(token) }, enabled = token.isNotBlank()) { Text("Connect INDmoney") }
-        }
-    }
-}
 
 /** OAuth sign-in in a WebView; hands back the redirect URL once [isRedirect] matches. */
 @SuppressLint("SetJavaScriptEnabled")
@@ -530,34 +466,6 @@ private fun OAuthWebDialog(title: String, url: String, isRedirect: (String) -> B
 
 /** Kite login inside a WebView; captures the request_token from the redirect. */
 @SuppressLint("SetJavaScriptEnabled")
-@Composable
-private fun KiteLoginDialog(url: String, onToken: (String) -> Unit, onDismiss: () -> Unit) {
-    Dialog(onDismiss, DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Kite login", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).padding(start = 8.dp))
-                TextButton(onDismiss) { Text("Cancel") }
-            }
-            AndroidView(factory = { ctx ->
-                WebView(ctx).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    webViewClient = object : WebViewClient() {
-                        private var handled = false
-                        private fun check(u: String?): Boolean {
-                            val t = u?.let { KiteConnectClient.requestTokenFrom(it) } ?: return false
-                            if (!handled) { handled = true; onToken(t) }
-                            return true
-                        }
-                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?) = check(request?.url?.toString())
-                        override fun onPageStarted(view: WebView?, u: String?, favicon: android.graphics.Bitmap?) { if (check(u)) view?.stopLoading() }
-                    }
-                    loadUrl(url)
-                }
-            }, modifier = Modifier.fillMaxSize())
-        }
-    }
-}
 
 @Composable
 private fun AnalyticsCard(a: com.capitol.app.analysis.CurrencyAnalytics) {
