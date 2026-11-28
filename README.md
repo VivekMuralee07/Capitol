@@ -12,7 +12,7 @@ Capitol is a native **Kotlin / Jetpack Compose** Android app. It pulls market da
 
 ## Features
 
-- **Colourful home page (Vibrant style)**: a gradient hero index chart (NIFTY 50 / SENSEX / BANK NIFTY / S&P 500 / NASDAQ) with pill tabs, a large live price and drag-to-inspect crosshair. Around it are a multi-colour glow, multi-colour quick actions, colour-tinted global market cards with sparklines, tinted gainers and losers, a *market mood* gauge, an advance/decline breadth bar and a watchlist signal heatmap. The Portfolio summary and the credit card bills card are gradient tiles. Prefer something calmer? *Settings → Appearance → Style → Premium* switches to a single-accent, high-contrast look.
+- **Colourful home page (Vibrant style)**: a gradient hero index chart (NIFTY 50 / SENSEX / BANK NIFTY / S&P 500 / NASDAQ) with pill tabs, a large live price and drag-to-inspect crosshair (the big price follows your finger). Around it are a multi-colour glow, multi-colour quick actions, colour-tinted global market cards with sparklines, tinted gainers and losers, a *market mood* gauge, an advance/decline breadth bar and a watchlist signal heatmap. The Portfolio summary and the credit card bills card are gradient tiles. Prefer something calmer? *Settings → Appearance → Style → Premium* switches to a single-accent, high-contrast look.
 - **Technical analysis of any symbol** (`RELIANCE.NS`, `TCS.BO`, `^NSEI`, `AAPL`, `BTC-USD` …) over 1D to 5Y, on candlestick or line charts with indicator overlays and sub-panes.
 - **Indicator filter with multi-select.** Pick any combination of 21 indicators in 6 categories, or use a preset (Swing trader, Trend, Momentum, Volume, Everything). For each selected indicator Capitol shows:
   - a signal (Strong Buy to Strong Sell) and the current metrics
@@ -23,9 +23,9 @@ Capitol is a native **Kotlin / Jetpack Compose** Android app. It pulls market da
 - **Watchlist**: add from search, swipe to delete, sort by signal, per-symbol price alerts.
 - **AI Agent (Claude)**: a chat agent that runs Capitol's own tools on-device. Its tools are symbol search, technical analysis with any indicator set, price summaries, watchlist scan/add/remove, and portfolio read. Ask things like *"Scan my watchlist and rank the strongest setups"* or *"Analyse INFY with RSI, MACD and Supertrend"*.
 - **Autopilot**: a background WorkManager job that re-analyses the watchlist every N hours and notifies you when a verdict changes or a price alert fires. If an API key is set, Claude summarises the changes.
-- **Broker connections (read-only, for analysis)**:
-  - **Zerodha Kite Connect v3**: in-app login, holdings, positions and margins.
-  - **INDmoney** through the INDstocks API (access token), plus a **CSV import** fallback for any broker.
+- **Broker connections (read-only, for analysis)** through each broker's official MCP server, with no API keys:
+  - **Zerodha Kite MCP**: stock holdings and Coin mutual funds.
+  - **INDmoney MCP**: Indian and US stocks, plus credit card bills. A **CSV import** works for any other broker.
   - Holdings map to Yahoo symbols (`NSE → .NS`, `BSE → .BO`), so you can open any holding in the analyser or ask the agent to review the whole portfolio.
 - **In-app updates**:
   - Installed from Google Play: the Play Core *flexible* in-app update flow.
@@ -90,21 +90,13 @@ Requirements: JDK 17+ and the Android SDK (platform 36).
 ### AI agent
 *Settings → AI Agent*: paste an Anthropic API key from <https://console.anthropic.com>. The key is stored encrypted with the Android Keystore and is only sent to `api.anthropic.com`. The agent uses the official `anthropic-java` SDK with model `claude-opus-5-5` and the server-side refusal fallback.
 
-### Zerodha Kite
-1. Create an app at <https://developers.kite.trade>. Set the redirect URL to `capitol://kite-callback`. Capitol reads the `request_token` from the in-app login page, so any redirect URL works.
-2. In *Portfolio → Zerodha Kite*, enter the API key and secret, then tap **Log in with Kite**.
-3. Kite access tokens expire every morning (about 6 AM IST); log in again when asked.
-
-> The token exchange needs your Kite **API secret**. Capitol keeps it encrypted on the device. If you'd rather keep the secret off the phone, run the exchange on your own server.
-
 ### Zerodha via Kite MCP (stocks + Coin mutual funds, no API key)
-*Portfolio → Zerodha via Kite MCP → Connect*. This logs in to Kite through Zerodha's official hosted MCP server (`https://mcp.kite.trade/mcp`). It needs no Kite developer app or API key. Capitol then reads your stock holdings and **Coin mutual funds**, shows them in the Portfolio tab and analytics, and lets the AI agent use Kite's read-only tools. Capitol finds the holdings tools in the server's own tool list, including mode-based tools such as `portfolio` / `mutual_funds` with `mode: "holdings"`, so it keeps working if Zerodha renames or merges them. Read modes only: modes such as place, modify or cancel are removed and refused. It never exposes order, login or other write tools. Kite logins last a day; reconnect when asked. If you use the Kite Connect API instead, mutual funds come from its `/mf/holdings` endpoint.
+*Portfolio → Zerodha via Kite MCP → Connect*. This logs in to Kite through Zerodha's official hosted MCP server (`https://mcp.kite.trade/mcp`). It needs no Kite developer app or API key. Capitol then reads your stock holdings and **Coin mutual funds**, shows them in the Portfolio tab and analytics, and lets the AI agent use Kite's read-only tools. Capitol finds the holdings tools in the server's own tool list, including mode-based tools such as `portfolio` / `mutual_funds` with `mode: "holdings"`, so it keeps working if Zerodha renames or merges them. Read modes only: modes such as place, modify or cancel are removed and refused. It never exposes order, login or other write tools. Kite logins last a day; reconnect when asked.
 
 ### INDmoney
-**Recommended: INDmoney MCP (includes US stocks).** In *Portfolio → INDmoney (MCP)* tap **Connect with INDmoney** and sign in on INDmoney's own page. Capitol connects to INDmoney's official MCP server (`https://mcp.indmoney.com/mcp`) using standard MCP OAuth: discovery, dynamic client registration and PKCE. **Credit card bills** from INDmoney's net worth (`networth_snapshot` liabilities) also appear in the Portfolio tab: card name, last 4 digits, total due and due date. They're read-only; you pay in your bank or INDmoney app. Autopilot reminds you 3 days before each due date and on the day. Your INDmoney Indian and US stocks then appear in the Portfolio tab and analytics, with US holdings totalled in USD. The AI agent can also read them through the server's tools. Capitol picks the holdings tools from the server's own tool list, and *Settings → Diagnostics* records which tools it used. Tokens are stored encrypted on the phone, refreshed automatically, and sent only to INDmoney, never to Claude.
+In *Portfolio → INDmoney (MCP)* tap **Connect with INDmoney** and sign in on INDmoney's own page. Capitol connects to INDmoney's official MCP server (`https://mcp.indmoney.com/mcp`) using standard MCP OAuth: discovery, dynamic client registration and PKCE. **Credit card bills** from INDmoney's net worth (`networth_snapshot` liabilities) also appear in the Portfolio tab: card name, last 4 digits, total due and due date. They're read-only; you pay in your bank or INDmoney app. Autopilot reminds you 3 days before each due date and on the day. Your INDmoney Indian and US stocks then appear in the Portfolio tab and analytics, with US holdings totalled in USD. The AI agent can also read them through the server's tools. Capitol picks the holdings tools from the server's own tool list, and *Settings → Diagnostics* records which tools it used. Tokens are stored encrypted on the phone, refreshed automatically, and sent only to INDmoney, never to Claude.
 
-**Alternative: INDstocks API token.**
-Generate a token at indstocks.com → API → *Generate Token* and paste it in *Portfolio → INDmoney*. Tokens are short-lived. If you set a static IP for the token, requests must come from that IP. Without API access, export your holdings and use **Import holdings CSV**.
+Without MCP access, export your holdings and use **Import holdings CSV**.
 
 ### Releases and in-app updates
 GitHub Actions (`.github/workflows/android.yml`) runs tests on every push and PR. Pushing a tag like `v1.1.0` builds a release APK (versionName from the tag, versionCode from the run number) and publishes it as a GitHub Release. Installed apps find it through the in-app updater.
