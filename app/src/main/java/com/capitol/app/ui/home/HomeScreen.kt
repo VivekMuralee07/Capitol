@@ -155,7 +155,7 @@ fun HomeContent(
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     itemsIndexed(st.indices) { i, (idx, q) ->
-                        Staggered(i) { IndexCard(idx, q) { onOpenSymbol(q.symbol) } }
+                        Staggered(i) { IndexCard(idx, q, CapitolColors.market.accents[i % CapitolColors.market.accents.size]) { onOpenSymbol(q.symbol) } }
                     }
                     if (st.indices.isEmpty() && st.loading) items(4) { ShimmerBox(Modifier.size(160.dp, 120.dp)) }
                 }
@@ -196,9 +196,15 @@ private fun TopGlow() {
     Canvas(Modifier.fillMaxSize()) {
         drawRect(bg)
         val w = size.width
-        val r = w * 1.1f
-        drawCircle(Brush.radialGradient(listOf(mc.glow.copy(alpha = if (mc.isDark) 0.16f else 0.10f), Color.Transparent),
-            center = Offset(w * 0.15f, -w * 0.15f), radius = r), r, Offset(w * 0.15f, -w * 0.15f))
+        fun blob(cx: Float, cy: Float, r: Float, c: Color, a: Float) =
+            drawCircle(Brush.radialGradient(listOf(c.copy(alpha = a), Color.Transparent), center = Offset(cx, cy), radius = r), r, Offset(cx, cy))
+        if (mc.vibrant) {
+            // Static multi-colour glow: violet, pink and sky behind the header and hero.
+            val a = if (mc.isDark) 0.30f else 0.20f
+            blob(w * 0.05f, -w * 0.05f, w * 0.9f, mc.accents[0], a)
+            blob(w * 0.95f, w * 0.10f, w * 0.8f, mc.accents[2], a * 0.85f)
+            blob(w * 0.55f, w * 0.75f, w * 0.9f, mc.accents[1], a * 0.6f)
+        } else blob(w * 0.15f, -w * 0.15f, w * 1.1f, mc.glow, if (mc.isDark) 0.16f else 0.10f)
     }
 }
 
@@ -208,9 +214,11 @@ private fun Header(isDark: Boolean, loading: Boolean, onToggleTheme: () -> Unit,
     val greet = when (hour) { in 5..11 -> "Good morning"; in 12..16 -> "Good afternoon"; else -> "Good evening" }
     Row(Modifier.statusBarsPadding().padding(top = 14.dp, bottom = 2.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(
-            Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primary),
+            Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(
+                if (CapitolColors.market.vibrant) Brush.linearGradient(CapitolColors.market.heroGradient)
+                else androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary)),
             contentAlignment = Alignment.Center,
-        ) { Icon(Icons.AutoMirrored.Filled.ShowChart, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(22.dp)) }
+        ) { Icon(Icons.AutoMirrored.Filled.ShowChart, null, tint = if (CapitolColors.market.vibrant) Color.White else MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(22.dp)) }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(greet, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -251,11 +259,12 @@ private fun HeroCard(st: HomeState, onSelect: (MarketIndex) -> Unit, onOpen: (St
     val hero = st.hero
     Box(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp))
-            .background(Brush.verticalGradient(listOf(mc.heroStart, mc.heroEnd)))
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (mc.isDark) 0.55f else 0.9f), RoundedCornerShape(28.dp))
+            .background(if (mc.vibrant) Brush.linearGradient(mc.heroGradient) else Brush.verticalGradient(mc.heroGradient))
+            .then(if (mc.vibrant) Modifier else Modifier.border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (mc.isDark) 0.55f else 0.9f), RoundedCornerShape(28.dp)))
             .clickable { hero?.let { onOpen(it.symbol) } }
             .padding(20.dp)
     ) {
+        com.capitol.app.ui.theme.OnGradient {
         Column {
             com.capitol.app.ui.components.PillTabs(HomeViewModel.INDICES.take(5), st.heroIndex, { it.label }, onSelect)
             Spacer(Modifier.height(16.dp))
@@ -279,6 +288,7 @@ private fun HeroCard(st: HomeState, onSelect: (MarketIndex) -> Unit, onOpen: (St
             } else {
                 ShimmerBox(Modifier.fillMaxWidth().height(260.dp))
             }
+        }
         }
     }
 }
@@ -319,23 +329,28 @@ private fun BreadthBar(adv: Int, dec: Int) {
 @Composable
 private fun QuickActions(onOpenSymbol: () -> Unit, onOpenAgent: () -> Unit, onOpenPortfolio: () -> Unit, onOpenScreener: () -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        QuickAction(Icons.AutoMirrored.Filled.ShowChart, "Analyze", CapitolColors.market.chart1, Modifier.weight(1f), onOpenSymbol)
-        QuickAction(Icons.Default.FilterAlt, "Screener", CapitolColors.market.chart2, Modifier.weight(1f), onOpenScreener)
-        QuickAction(Icons.Default.AutoAwesome, "Ask AI", CapitolColors.market.chart3, Modifier.weight(1f), onOpenAgent)
-        QuickAction(Icons.Default.AccountBalanceWallet, "Portfolio", CapitolColors.market.bull, Modifier.weight(1f), onOpenPortfolio)
+        val a = CapitolColors.market.accents
+        QuickAction(Icons.AutoMirrored.Filled.ShowChart, "Analyze", a[0], Modifier.weight(1f), onOpenSymbol)
+        QuickAction(Icons.Default.FilterAlt, "Screener", a[1], Modifier.weight(1f), onOpenScreener)
+        QuickAction(Icons.Default.AutoAwesome, "Ask AI", a[2], Modifier.weight(1f), onOpenAgent)
+        QuickAction(Icons.Default.AccountBalanceWallet, "Portfolio", a[4], Modifier.weight(1f), onOpenPortfolio)
     }
 }
 
 @Composable
-private fun QuickAction(icon: ImageVector, label: String, @Suppress("UNUSED_PARAMETER") color: Color, modifier: Modifier, onClick: () -> Unit) {
+private fun QuickAction(icon: ImageVector, label: String, color: Color, modifier: Modifier, onClick: () -> Unit) {
+    val vibrant = CapitolColors.market.vibrant
     Column(
-        modifier.clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainer)
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (CapitolColors.market.isDark) 0.55f else 0.9f), RoundedCornerShape(20.dp))
+        modifier.clip(RoundedCornerShape(20.dp))
+            .background(if (vibrant) color.copy(alpha = if (CapitolColors.market.isDark) 0.16f else 0.11f) else MaterialTheme.colorScheme.surfaceContainer)
+            .then(if (vibrant) Modifier else Modifier.border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (CapitolColors.market.isDark) 0.55f else 0.9f), RoundedCornerShape(20.dp)))
             .clickable(onClick = onClick).padding(vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(Modifier.size(36.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+        Box(Modifier.size(38.dp).clip(CircleShape)
+            .background(if (vibrant) Brush.linearGradient(listOf(color, color.copy(alpha = 0.75f))) else androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.secondaryContainer)),
+            contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = if (vibrant) Color.White else MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.height(6.dp))
         Text(label, style = MaterialTheme.typography.labelMedium)
@@ -343,9 +358,12 @@ private fun QuickAction(icon: ImageVector, label: String, @Suppress("UNUSED_PARA
 }
 
 @Composable
-private fun IndexCard(idx: MarketIndex, q: QuoteSnapshot, onClick: () -> Unit) {
-    CapitolCard(Modifier.width(168.dp).clickable(onClick = onClick), padding = PaddingValues(14.dp)) {
-        com.capitol.app.ui.components.Overline(idx.region)
+private fun IndexCard(idx: MarketIndex, q: QuoteSnapshot, accent: Color, onClick: () -> Unit) {
+    val vibrant = CapitolColors.market.vibrant
+    CapitolCard(Modifier.width(168.dp).clickable(onClick = onClick), padding = PaddingValues(14.dp),
+        tint = if (vibrant) Brush.verticalGradient(listOf(accent.copy(alpha = 0.24f), accent.copy(alpha = 0.04f))) else null) {
+        if (vibrant) Text(idx.region.uppercase(), style = MaterialTheme.typography.labelSmall, color = accent, fontWeight = FontWeight.Bold)
+        else com.capitol.app.ui.components.Overline(idx.region)
         Text(idx.label, style = MaterialTheme.typography.titleSmall, maxLines = 1)
         Spacer(Modifier.height(6.dp))
         com.capitol.app.ui.components.FlashingPrice(q.price, fontSize = 18)
@@ -457,7 +475,8 @@ private fun MoversSection(st: HomeState, onUniverse: (com.capitol.app.analysis.U
 
 @Composable
 private fun MoversColumn(title: String, quotes: List<com.capitol.app.data.live.LiveQuote>, color: Color, modifier: Modifier, onOpen: (String) -> Unit) {
-    CapitolCard(modifier, padding = PaddingValues(10.dp)) {
+    CapitolCard(modifier, padding = PaddingValues(10.dp),
+        tint = if (CapitolColors.market.vibrant) Brush.verticalGradient(listOf(color.copy(alpha = 0.16f), color.copy(alpha = 0.03f))) else null) {
         Text(title, style = MaterialTheme.typography.labelLarge, color = color)
         Spacer(Modifier.height(4.dp))
         if (quotes.isEmpty()) Text("None today", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
