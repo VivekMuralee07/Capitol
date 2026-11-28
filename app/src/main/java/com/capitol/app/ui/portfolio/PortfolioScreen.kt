@@ -1,5 +1,11 @@
 package com.capitol.app.ui.portfolio
 
+import androidx.compose.ui.draw.clip
+
+import androidx.compose.foundation.layout.Box
+
+import androidx.compose.foundation.border
+
 import android.annotation.SuppressLint
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -170,13 +176,8 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Portfolio", style = MaterialTheme.typography.headlineMedium)
-                    Text("Read-only broker sync for analysis — Capitol never places orders.", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                IconButton({ vm.refresh() }) { Icon(Icons.Default.Refresh, "Refresh") }
+            com.capitol.app.ui.components.ScreenHeader("Portfolio", subtitle = "Read-only broker sync · Capitol never places orders") {
+                com.capitol.app.ui.components.HeaderIconButton(Icons.Default.Refresh, "Refresh", { vm.refresh() })
             }
             if (st.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         }
@@ -246,19 +247,38 @@ fun PortfolioScreen(vm: PortfolioViewModel, onAnalyze: (String) -> Unit, onAskAi
 
 @Composable
 private fun SummaryCard(totals: List<CurrencyTotal>, onAskAi: () -> Unit) {
-    CapitolCard {
-        totals.forEachIndexed { i, t ->
-            if (i > 0) Spacer(Modifier.height(10.dp))
-            Text("Current value · ${if (t.currency == "USD") "US stocks" else "Indian stocks"}", style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            AnimatedNumber(t.current, fontSize = 28, format = { "${t.symbol}%,.2f".format(it) })
-            Row {
-                Text("Invested ${t.symbol}%,.2f".format(t.invested), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                Text("P&L %+,.2f (%+.2f%%)".format(t.pnl, t.pnlPercent), color = changeColor(t.pnl), style = NumberStyle.copy(fontSize = 13.sp))
+    val mc = CapitolColors.market
+    Box(
+        Modifier.fillMaxWidth().clip(androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
+            .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(mc.heroStart, mc.heroEnd)))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (mc.isDark) 0.55f else 0.9f), androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
+            .padding(20.dp)
+    ) {
+        Column {
+            totals.forEachIndexed { i, t ->
+                if (i > 0) { Spacer(Modifier.height(16.dp)); com.capitol.app.ui.components.RowDivider(); Spacer(Modifier.height(16.dp)) }
+                com.capitol.app.ui.components.Overline("Current value · ${if (t.currency == "USD") "US stocks" else "Indian stocks"}")
+                Spacer(Modifier.height(4.dp))
+                AnimatedNumber(t.current, fontSize = 34, format = { "${t.symbol}%,.2f".format(it) })
+                Spacer(Modifier.height(6.dp))
+                com.capitol.app.ui.components.ChangePill(t.pnl, t.pnlPercent, showAbsolute = true)
+                Spacer(Modifier.height(12.dp))
+                Row {
+                    Column(Modifier.weight(1f)) {
+                        com.capitol.app.ui.components.Overline("Invested")
+                        Text("${t.symbol}%,.2f".format(t.invested), style = NumberStyle.copy(fontSize = 15.sp))
+                    }
+                    Column(Modifier.weight(1f)) {
+                        com.capitol.app.ui.components.Overline("Total P&L")
+                        Text("%+,.2f".format(t.pnl), style = NumberStyle.copy(fontSize = 15.sp), color = changeColor(t.pnl))
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            OutlinedButton(onAskAi, shape = androidx.compose.foundation.shape.RoundedCornerShape(50)) {
+                Icon(Icons.Default.AutoAwesome, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("AI portfolio review")
             }
         }
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(onAskAi) { Icon(Icons.Default.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text("AI portfolio review") }
     }
 }
 
@@ -302,22 +322,29 @@ private fun CreditCardsCard(cards: List<com.capitol.app.data.broker.CreditCardBi
 @Composable
 private fun HoldingRow(h: Holding, onClick: () -> Unit) {
     // Mutual funds have no chart to open.
-    CapitolCard(Modifier.fillMaxWidth().then(if (h.isMutualFund) Modifier else Modifier.clickable(onClick = onClick)), padding = PaddingValues(12.dp)) {
+    CapitolCard(Modifier.fillMaxWidth().then(if (h.isMutualFund) Modifier else Modifier.clickable(onClick = onClick)), padding = PaddingValues(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                if (h.isMutualFund) Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("MF", style = MaterialTheme.typography.labelSmall, color = CapitolColors.market.chart3,
-                        modifier = Modifier.background(CapitolColors.market.chart3.copy(alpha = 0.15f), androidx.compose.foundation.shape.RoundedCornerShape(4.dp)).padding(horizontal = 4.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(h.displayName ?: h.tradingSymbol, style = MaterialTheme.typography.titleSmall, maxLines = 2)
-                } else Text(h.tradingSymbol, style = MaterialTheme.typography.titleSmall)
-                Text(if (h.isMutualFund) "${h.broker.label}${h.folio?.let { " · folio $it" } ?: ""} · ${"%,.3f".format(h.quantity)} units @ ${"%,.2f".format(h.averagePrice)}"
-                    else "${h.broker.label} · ${h.exchange} · ${"%.4g".format(h.quantity)} @ ${"%,.2f".format(h.averagePrice)}",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // Monogram avatar: the symbol's first letter on a quiet accent tint.
+            Box(Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                .background(if (h.isMutualFund) CapitolColors.market.chart3.copy(alpha = 0.15f) else MaterialTheme.colorScheme.secondaryContainer),
+                contentAlignment = Alignment.Center) {
+                Text(if (h.isMutualFund) "MF" else h.tradingSymbol.take(1), style = MaterialTheme.typography.labelLarge,
+                    color = if (h.isMutualFund) CapitolColors.market.chart3 else MaterialTheme.colorScheme.primary)
             }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(if (h.isMutualFund) h.displayName ?: h.tradingSymbol else h.tradingSymbol, style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                Text(if (h.isMutualFund) "${h.broker.label}${h.folio?.let { " · folio $it" } ?: ""} · ${"%,.3f".format(h.quantity)} units @ ${"%,.2f".format(h.averagePrice)}"
+                    else "${h.broker.label} · ${"%.4g".format(h.quantity)} @ ${"%,.2f".format(h.averagePrice)}",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.width(8.dp))
             Column(horizontalAlignment = Alignment.End) {
-                Text((if (h.isUs) "$" else "₹") + "%,.2f".format(h.current), style = NumberStyle.copy(fontSize = 14.sp))
-                Text("%+,.2f (%+.1f%%)".format(h.pnl, h.pnlPercent), color = changeColor(h.pnl), style = NumberStyle.copy(fontSize = 12.sp))
+                Text((if (h.isUs) "$" else "₹") + "%,.2f".format(h.current), style = NumberStyle.copy(fontSize = 15.sp))
+                Spacer(Modifier.height(3.dp))
+                com.capitol.app.ui.components.ChangePill(h.pnl, h.pnlPercent, fontSize = 11)
             }
         }
     }

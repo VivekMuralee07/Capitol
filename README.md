@@ -12,7 +12,7 @@ Capitol is a native **Kotlin / Jetpack Compose** Android app. It pulls market da
 
 ## Features
 
-- **Animated home page**: moving "aurora" background, a scrolling ticker tape, a hero index chart (NIFTY 50 / SENSEX / BANK NIFTY / S&P 500 / NASDAQ) with an animated reveal and drag-to-inspect crosshair, a *market mood* gauge with a spring-animated needle, an advance/decline breadth bar, global market cards with sparklines, a watchlist signal heatmap and top movers. Cards enter with staggered animations.
+- **Premium home page**: a calm, high-contrast design with one accent colour. It has a soft top glow, a scrolling ticker, a hero index chart (NIFTY 50 / SENSEX / BANK NIFTY / S&P 500 / NASDAQ) with pill tabs, a large live price and drag-to-inspect crosshair, a *market mood* gauge, an advance/decline breadth bar, global market cards with sparklines, a watchlist signal heatmap and top movers. Every screen shares the same large-title headers, hairline cards, tabular numbers and change pills.
 - **Technical analysis of any symbol** (`RELIANCE.NS`, `TCS.BO`, `^NSEI`, `AAPL`, `BTC-USD` …) over 1D to 5Y, on candlestick or line charts with indicator overlays and sub-panes.
 - **Indicator filter with multi-select.** Pick any combination of 21 indicators in 6 categories, or use a preset (Swing trader, Trend, Momentum, Volume, Everything). For each selected indicator Capitol shows:
   - a signal (Strong Buy to Strong Sell) and the current metrics

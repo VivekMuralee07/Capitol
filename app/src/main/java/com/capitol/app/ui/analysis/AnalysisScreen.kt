@@ -139,12 +139,15 @@ fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onCompare: (St
                 if (series == null) ShimmerBox(Modifier.fillMaxWidth().height(120.dp))
                 else Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(series.name, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(series.name, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text("${series.symbol} · ${series.exchange} · ${series.currency}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(4.dp))
                         val q = st.liveQuote
-                        com.capitol.app.ui.components.FlashingPrice(q?.price ?: series.regularMarketPrice, fontSize = 28)
-                        if (q != null) ChangeText(q.change, q.changePercent) else ChangeText(series.change, series.changePercent)
+                        Spacer(Modifier.height(4.dp))
+                        com.capitol.app.ui.components.FlashingPrice(q?.price ?: series.regularMarketPrice, fontSize = 34)
+                        Spacer(Modifier.height(4.dp))
+                        if (q != null) com.capitol.app.ui.components.ChangePill(q.change, q.changePercent, showAbsolute = true)
+                        else com.capitol.app.ui.components.ChangePill(series.change, series.changePercent, showAbsolute = true)
                         com.capitol.app.ui.components.LiveBadge(st.streaming, st.lastTick,
                             if (series.symbol.endsWith(".NS") || series.symbol.endsWith(".BO") || series.symbol.startsWith("^NSE") || series.symbol == "^BSESN")
                                 com.capitol.app.data.market.MarketHours.indiaOpen()
@@ -160,13 +163,12 @@ fun AnalysisScreen(vm: AnalysisViewModel, initialSymbol: String?, onCompare: (St
                 }
             }
             item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(ChartRange.PICKER) { r -> FilterChip(r == st.range, { vm.setRange(r) }, { Text(r.label) }) }
-                    item {
-                        IconButton({ chartMode = if (chartMode == PriceChartMode.CANDLES) PriceChartMode.LINE else PriceChartMode.CANDLES }) {
-                            Icon(if (chartMode == PriceChartMode.CANDLES) Icons.AutoMirrored.Filled.ShowChart else Icons.Default.CandlestickChart, "Chart type")
-                        }
-                    }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    com.capitol.app.ui.components.PillTabs(ChartRange.PICKER, st.range, { it.label }, { vm.setRange(it) }, Modifier.weight(1f))
+                    Spacer(Modifier.width(8.dp))
+                    com.capitol.app.ui.components.HeaderIconButton(
+                        if (chartMode == PriceChartMode.CANDLES) Icons.AutoMirrored.Filled.ShowChart else Icons.Default.CandlestickChart, "Chart type",
+                        { chartMode = if (chartMode == PriceChartMode.CANDLES) PriceChartMode.LINE else PriceChartMode.CANDLES })
                 }
             }
             val report = st.report

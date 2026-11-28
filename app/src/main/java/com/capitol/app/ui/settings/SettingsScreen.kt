@@ -69,10 +69,7 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit, onStartUpdate: () -> Uni
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-                Text("Settings", style = MaterialTheme.typography.headlineMedium)
-            }
+            com.capitol.app.ui.components.ScreenHeader("Settings", onBack = onBack)
         }
         item {
             CapitolCard {

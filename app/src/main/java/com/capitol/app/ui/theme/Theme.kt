@@ -15,8 +15,8 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /** Market-specific colours that Material's scheme doesn't cover. */
@@ -36,55 +36,80 @@ data class MarketColors(
     val isDark: Boolean,
 )
 
+// Premium fintech palette: near-black / soft-white canvas, quiet surfaces, one indigo accent,
+// and softer gain/loss colours so numbers carry the colour, not the chrome.
+private val Accent = Color(0xFF8B93FF)
+private val AccentLight = Color(0xFF4B55E0)
+
 private val DarkMarket = MarketColors(
-    bull = Color(0xFF3DDC97), bear = Color(0xFFFF5C7A), neutral = Color(0xFFFFC857),
-    chart1 = Color(0xFF7C9CFF), chart2 = Color(0xFFFFB86B), chart3 = Color(0xFFC792EA), chart4 = Color(0xFF4DD0E1),
-    grid = Color(0x22FFFFFF), heroStart = Color(0xFF101A3A), heroEnd = Color(0xFF0A2E2A), glow = Color(0xFF3DDC97),
+    bull = Color(0xFF34D399), bear = Color(0xFFF87171), neutral = Color(0xFFFBBF24),
+    chart1 = Accent, chart2 = Color(0xFFF4A261), chart3 = Color(0xFFB794F6), chart4 = Color(0xFF38BDF8),
+    grid = Color(0x14FFFFFF), heroStart = Color(0xFF171B2E), heroEnd = Color(0xFF111319), glow = Accent,
     isDark = true,
 )
 private val LightMarket = MarketColors(
-    bull = Color(0xFF0E9F6E), bear = Color(0xFFE02454), neutral = Color(0xFFD89B00),
-    chart1 = Color(0xFF3355FF), chart2 = Color(0xFFF08A24), chart3 = Color(0xFF8E44AD), chart4 = Color(0xFF0097A7),
-    grid = Color(0x1A000000), heroStart = Color(0xFFDCE6FF), heroEnd = Color(0xFFD5F5EA), glow = Color(0xFF0E9F6E),
+    bull = Color(0xFF059669), bear = Color(0xFFDC2626), neutral = Color(0xFFD97706),
+    chart1 = AccentLight, chart2 = Color(0xFFE07A1F), chart3 = Color(0xFF7C3AED), chart4 = Color(0xFF0284C7),
+    grid = Color(0x12000000), heroStart = Color(0xFFEEF0FF), heroEnd = Color(0xFFFFFFFF), glow = AccentLight,
     isDark = false,
 )
 
 val LocalMarketColors = staticCompositionLocalOf { DarkMarket }
 
 private val DarkScheme = darkColorScheme(
-    primary = Color(0xFF7C9CFF), onPrimary = Color(0xFF0A1030),
-    secondary = Color(0xFF3DDC97), onSecondary = Color(0xFF00281A),
-    tertiary = Color(0xFFFFC857),
-    background = Color(0xFF070B14), onBackground = Color(0xFFE6EAF2),
-    surface = Color(0xFF0E1422), onSurface = Color(0xFFE6EAF2),
-    surfaceVariant = Color(0xFF182033), onSurfaceVariant = Color(0xFFA6B0C3),
-    surfaceContainer = Color(0xFF121A2B), surfaceContainerHigh = Color(0xFF182136),
-    outline = Color(0xFF2A3550), error = Color(0xFFFF5C7A),
+    primary = Accent, onPrimary = Color(0xFF0B0D1F),
+    primaryContainer = Color(0xFF23264A), onPrimaryContainer = Color(0xFFDDE0FF),
+    // Chips, nav indicator and segmented buttons use the secondary container: a quiet accent tint.
+    secondary = Accent, onSecondary = Color(0xFF0B0D1F),
+    secondaryContainer = Color(0xFF22253F), onSecondaryContainer = Color(0xFFE3E5FF),
+    tertiary = Color(0xFFFBBF24),
+    background = Color(0xFF0A0B0F), onBackground = Color(0xFFF2F4F8),
+    surface = Color(0xFF0A0B0F), onSurface = Color(0xFFF2F4F8),
+    surfaceVariant = Color(0xFF1A1D25), onSurfaceVariant = Color(0xFF8D94A5),
+    surfaceContainerLowest = Color(0xFF0A0B0F), surfaceContainerLow = Color(0xFF101217),
+    surfaceContainer = Color(0xFF14161C), surfaceContainerHigh = Color(0xFF1B1E26), surfaceContainerHighest = Color(0xFF22252E),
+    outline = Color(0xFF2A2E39), outlineVariant = Color(0xFF1F222B), error = Color(0xFFF87171),
 )
 private val LightScheme = lightColorScheme(
-    primary = Color(0xFF3355FF), onPrimary = Color.White,
-    secondary = Color(0xFF0E9F6E), onSecondary = Color.White,
-    tertiary = Color(0xFFD89B00),
-    background = Color(0xFFF4F7FB), onBackground = Color(0xFF0F172A),
-    surface = Color(0xFFFFFFFF), onSurface = Color(0xFF0F172A),
-    surfaceVariant = Color(0xFFE9EEF6), onSurfaceVariant = Color(0xFF55607A),
-    surfaceContainer = Color(0xFFF0F3F9), surfaceContainerHigh = Color(0xFFE8EDF5),
-    outline = Color(0xFFD0D7E4), error = Color(0xFFE02454),
+    primary = AccentLight, onPrimary = Color.White,
+    primaryContainer = Color(0xFFE6E8FF), onPrimaryContainer = Color(0xFF151A6B),
+    secondary = AccentLight, onSecondary = Color.White,
+    secondaryContainer = Color(0xFFE8EAFF), onSecondaryContainer = Color(0xFF1C2280),
+    tertiary = Color(0xFFD97706),
+    background = Color(0xFFF6F7F9), onBackground = Color(0xFF0B0D12),
+    surface = Color(0xFFF6F7F9), onSurface = Color(0xFF0B0D12),
+    surfaceVariant = Color(0xFFEEF0F4), onSurfaceVariant = Color(0xFF5F6675),
+    surfaceContainerLowest = Color.White, surfaceContainerLow = Color(0xFFFBFBFC),
+    surfaceContainer = Color.White, surfaceContainerHigh = Color(0xFFF1F3F6), surfaceContainerHighest = Color(0xFFE9ECF1),
+    outline = Color(0xFFE3E6EC), outlineVariant = Color(0xFFEDEFF3), error = Color(0xFFDC2626),
 )
 
 private val CapitolType = Typography().run {
     copy(
-        displaySmall = displaySmall.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp),
-        headlineMedium = headlineMedium.copy(fontWeight = FontWeight.Bold),
-        headlineSmall = headlineSmall.copy(fontWeight = FontWeight.SemiBold),
-        titleLarge = titleLarge.copy(fontWeight = FontWeight.SemiBold),
+        displayMedium = displayMedium.copy(fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp),
+        displaySmall = displaySmall.copy(fontWeight = FontWeight.SemiBold, letterSpacing = (-0.8).sp),
+        headlineLarge = headlineLarge.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.6).sp),
+        headlineMedium = headlineMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp),
+        headlineSmall = headlineSmall.copy(fontWeight = FontWeight.SemiBold, letterSpacing = (-0.3).sp),
+        titleLarge = titleLarge.copy(fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp),
         titleMedium = titleMedium.copy(fontWeight = FontWeight.SemiBold),
+        titleSmall = titleSmall.copy(fontWeight = FontWeight.SemiBold),
         labelLarge = labelLarge.copy(fontWeight = FontWeight.SemiBold),
+        labelMedium = labelMedium.copy(fontWeight = FontWeight.Medium),
+        labelSmall = labelSmall.copy(fontWeight = FontWeight.Medium, letterSpacing = 0.4.sp),
     )
 }
 
-/** Tabular figures so prices don't jitter while animating. */
-val NumberStyle = TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
+private val CapitolShapes = androidx.compose.material3.Shapes(
+    extraSmall = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+    small = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+    medium = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+    large = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+    extraLarge = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
+)
+
+/** Tabular (fixed-width) figures in the app's sans font, so prices line up and don't jitter while animating. */
+val NumberStyle = TextStyle(fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum", letterSpacing = (-0.2).sp)
 
 @Composable
 fun CapitolTheme(darkTheme: Boolean, dynamicColor: Boolean = false, content: @Composable () -> Unit) {
@@ -95,7 +120,7 @@ fun CapitolTheme(darkTheme: Boolean, dynamicColor: Boolean = false, content: @Co
         else -> LightScheme
     }
     CompositionLocalProvider(LocalMarketColors provides if (darkTheme) DarkMarket else LightMarket) {
-        MaterialTheme(colorScheme = scheme, typography = CapitolType) {
+        MaterialTheme(colorScheme = scheme, typography = CapitolType, shapes = CapitolShapes) {
             // Root surface so all text defaults to the correct on-background colour in both themes.
             androidx.compose.material3.Surface(color = scheme.background, contentColor = scheme.onBackground, content = content)
         }

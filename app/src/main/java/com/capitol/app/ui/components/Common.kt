@@ -21,6 +21,8 @@ import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.automirrored.filled.TrendingFlat
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -90,28 +92,94 @@ fun ChangeText(change: Double, pct: Double, modifier: Modifier = Modifier, fontS
 }
 
 @Composable
-fun CapitolCard(modifier: Modifier = Modifier, padding: PaddingValues = PaddingValues(16.dp), content: @Composable ColumnScope.() -> Unit) {
+fun CapitolCard(modifier: Modifier = Modifier, padding: PaddingValues = PaddingValues(18.dp), content: @Composable ColumnScope.() -> Unit) {
+    val dark = CapitolColors.market.isDark
     Card(
         modifier,
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+        // Hairline edge: barely there in dark mode, a soft rule on light backgrounds.
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (dark) 0.55f else 0.9f)),
+        elevation = CardDefaults.cardElevation(0.dp),
     ) { Column(Modifier.padding(padding), content = content) }
 }
 
+/** Section heading: quiet title with an optional trailing action ("See all", chips…). */
 @Composable
 fun SectionTitle(text: String, modifier: Modifier = Modifier, trailing: @Composable (() -> Unit)? = null) {
-    Row(modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth().padding(top = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
         trailing?.invoke()
     }
+}
+
+/**
+ * Large-title screen header used by every screen: optional back button, title, subtitle and trailing actions.
+ * Handles the status bar inset itself.
+ */
+@Composable
+fun ScreenHeader(
+    title: String,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    onBack: (() -> Unit)? = null,
+    actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {},
+) {
+    Row(modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (onBack != null) {
+            HeaderIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onBack)
+            Spacer(Modifier.width(12.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = if (onBack == null) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.headlineSmall,
+                maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            subtitle?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+    }
+}
+
+/** Round, softly filled icon button used in headers. */
+@Composable
+fun HeaderIconButton(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit,
+                     tint: Color = MaterialTheme.colorScheme.onSurface) {
+    Box(
+        Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .clickable(onClickLabel = description, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Icon(icon, description, Modifier.size(20.dp), tint = tint) }
+}
+
+/** Tinted pill with an arrow and percentage — the standard way Capitol shows a day change. */
+@Composable
+fun ChangePill(change: Double, pct: Double, modifier: Modifier = Modifier, showAbsolute: Boolean = false, fontSize: Int = 13) {
+    val c = changeColor(change)
+    Row(
+        modifier.clip(RoundedCornerShape(50)).background(c.copy(alpha = 0.13f)).padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            (if (change >= 0) "▲ " else "▼ ") + (if (showAbsolute) "%,.2f · ".format(kotlin.math.abs(change)) else "") + "%.2f%%".format(kotlin.math.abs(pct)),
+            color = c, style = NumberStyle.copy(fontSize = fontSize.sp, fontWeight = FontWeight.SemiBold),
+        )
+    }
+}
+
+/** Small uppercase label above a value (e.g. "INVESTED"). */
+@Composable
+fun Overline(text: String, modifier: Modifier = Modifier) {
+    Text(text.uppercase(), modifier, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
 fun ErrorBanner(message: String, modifier: Modifier = Modifier) {
     val c = MaterialTheme.colorScheme.error
     Row(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.copy(alpha = 0.12f)).padding(12.dp),
+        modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.copy(alpha = 0.10f)).padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Icons.Default.ErrorOutline, null, tint = c)
@@ -219,3 +287,32 @@ fun LiveBadge(streaming: Boolean, lastTick: Long?, marketOpen: Boolean, modifier
         Text(label + (lastTick?.let { " · ${fmt.format(java.util.Date(it))}" } ?: ""), style = MaterialTheme.typography.labelSmall, color = color)
     }
 }
+
+/**
+ * Compact pill tabs (chart ranges, index pickers): the selected pill is filled with the text colour,
+ * the rest are plain labels — a quiet, premium segmented control.
+ */
+@Composable
+fun <T> PillTabs(options: List<T>, selected: T, label: (T) -> String, onSelect: (T) -> Unit, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.lazy.LazyRow(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        items(options.size) { i ->
+            val o = options[i]
+            val on = o == selected
+            Text(
+                label(o),
+                Modifier.clip(RoundedCornerShape(50))
+                    .background(if (on) MaterialTheme.colorScheme.onSurface else Color.Transparent)
+                    .clickable { onSelect(o) }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                color = if (on) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** A thin rule between rows inside a card. */
+@Composable
+fun RowDivider(modifier: Modifier = Modifier) =
+    androidx.compose.material3.HorizontalDivider(modifier, thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
